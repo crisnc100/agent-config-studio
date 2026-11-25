@@ -43,3 +43,32 @@ Installed code-review runtime: 2026-11-25-14-08-33-5310a7 at 1c7e46bd460e93c8943
 Browser QA is NOT complete: initial CUA REPL could not initialize, native Chrome fallback was interrupted by Cris because it interfered with an interview. All computer control stopped and isolated QA server stopped. No feature UI interaction/persistence criterion is claimed passed by that attempt. Continue only background code/tests; interactive computer control requires Cris to resume it. A private headless automated check, if used, must have its own evidence and must not touch the active browser/profile.
 
 Phase 3 shadow: neon, confidence 0.37; telemetry only. Same task owner Sol, fresh high-effort worker.
+
+## Phase 3 implementation
+
+The Claude and Codex build skills load `BUILDER_RECORD` from the task plan or handoff. On the first automatic selection, they call `model-id --pick builder --json` with the Frame's explicit visual-direction decision, a short summary file for task fit when applicable, and any accumulated exclusions on replacement. They save the family, model ID, effective effort, mode, reason and `operatorNamed` separately from the phase worker's session identifier. Fresh phases, resumes and fixes load the same record. The seat's effort rules and operator's effort overrides are applied once and the effective effort is recorded. An explicitly named member of the configured lineup retains the direct-family pause behavior and bypasses the automatic pick. A role's alt is not a lineup member.
+
+Same-vendor builders use native subagents with the recorded model and effort. The Claude seat uses the Codex CLI for a Codex family. The Codex seat uses the Claude CLI with edit permissions and an empty MCP configuration for a Claude family. Fresh phases start fresh workers. Callbacks and unfinished phases use their own saved session when the route supports it. Antigravity goes through `ask-model --family "$BUILDER" --build --cwd "$WORKTREE" --effort "$EFFORT"` at the canonical Git root, with the wrapper's native permission and unverified served-model behavior. Review gets the recorded author in `REVIEW_AUTHOR`.
+
+For confirmed quota or startup unavailability, the replacement keeps earlier exclusions, adds the failed family and hands off commits, check results, remaining work and partial edits before dispatch. A generic error can leave edits and does not by itself trigger replacement. A structured no-eligible result ends the chain with the picker's reasons. A CLI without the picker reports `acs install-model-id`. The standing quality escalation still sharpens an incomplete brief first and changes an automatically chosen family when the adequate brief misses the same criterion twice.
+
+Implementation and documentation are in b75320f. The separate test-only commit 0caa7fb registers the new consumer suite and keeps the existing lookup and raw-command guards scoped to their original behavior, with exact exceptions for saved-packet effort and the Codex-to-Claude write command. It retains named/member/role/flavor effort checks, omitted empty effort, the builder-alt check and the model resolver flags in the README. The frozen review.test.mjs is unchanged. The registry contains 205 entries. The test changes are ready for independent checking.
+
+On Node 23.11.1, these focused commands passed 379 checks with zero failures or skips.
+
+| Command | Passed |
+| --- | ---: |
+| `node tests/build-builder-skill.mjs` | 12 |
+| `node packs/review-gate/tests/review.skills.test.mjs` | 26 |
+| `node tests/readme.mjs` | 57 |
+| `node tests/guards.mjs` | 11 |
+| `node tests/setup-guards.mjs` | 110 |
+| `node tests/suite-coverage.mjs` | 33 |
+| `node tests/no-personal-paths.mjs` | 11 |
+| `node tests/roles-pick.mjs` | 15 |
+| `node tests/packs-install.mjs` | 93 |
+| `node tests/ask-model-build.mjs` | 11 |
+
+`node --check` passed for the changed test JavaScript and `git diff --check` passed. `node packs/review-gate/tests/review.packs.test.mjs` reported 24 passes and one existing failure. The model-name sweep reports the same two lines, `packs/KNOWN-LIMITS.md:53` and `:54`, when run from an isolated full `git archive c07e0e9`. Both lines and the model-name sweep are unchanged.
+
+The new tests run the skills' shell blocks against stub worker CLIs and fixture picks, use the repository resolver for explicit membership and exhaustion, and check the instruction-driven native route and handoff requirements as text. They do not claim a live builder, review, or model identity check. Browser QA and full-suite close are tracked by the orchestrator separately.
