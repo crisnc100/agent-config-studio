@@ -72,3 +72,7 @@ On Node 23.11.1, these focused commands passed 379 checks with zero failures or 
 `node --check` passed for the changed test JavaScript and `git diff --check` passed. `node packs/review-gate/tests/review.packs.test.mjs` reported 24 passes and one existing failure. The model-name sweep reports the same two lines, `packs/KNOWN-LIMITS.md:53` and `:54`, when run from an isolated full `git archive c07e0e9`. Both lines and the model-name sweep are unchanged.
 
 The new tests run the skills' shell blocks against stub worker CLIs and fixture picks, use the repository resolver for explicit membership and exhaustion, and check the instruction-driven native route and handoff requirements as text. They do not claim a live builder, review, or model identity check. Browser QA and full-suite close are tracked by the orchestrator separately.
+
+## Builder editor guidance
+
+The note beneath the settings explains that a big task keeps its chosen builder through phases, fixes and resumes. It states when the preference applies and which work uses the selected strategy. Focused checks passed with zero failures: `node tests/builder-settings-ui.mjs` (2), `node tests/builder-settings.mjs` (6), `node tests/roles-ui.mjs` (75), and `node tests/models-layout-ui.mjs` (109). `node --check public/app.js` and `git diff --check` passed.

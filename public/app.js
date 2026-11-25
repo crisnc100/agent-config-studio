@@ -5428,6 +5428,10 @@ function roleEditor(role) {
   form.appendChild(members);
   const paintDesign = d.pick ? builderPickFields(d.pick, field, families) : null;
   box.appendChild(form);
+  if (d.pick) {
+    box.appendChild(el('p', 'scope-note',
+      'The build skill picks one builder per big task and keeps it through phases, fixes and resumes. The design preference applies only when the task needs new frontend visual direction. Frontend logic, implementation of an existing design, backend work and database changes use the selected strategy.'));
+  }
 
   const bar = el('div', 'models-edit roles-buttons');
   const save = el('button', 'btn primary', 'Save');
