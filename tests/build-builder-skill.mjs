@@ -187,6 +187,33 @@ for (const harness of ['codex', 'claude']) {
     const scope = `${harness} with strict ${shell.name}`;
     test(`${scope}: one picked non-first family owns fresh phases, resume, fixes and review`, () => checkTaskOwner(shell));
 
+    if (harness === 'claude') {
+      test(`${scope}: empty resolved effort is omitted for fresh and resumed Codex dispatch`, () => {
+        const f = fixture(shell);
+        fs.writeFileSync(f.roles, JSON.stringify({
+          version: 2, roles: { builder: { use: [family] } },
+        }));
+        const picked = f.run(`${prepare}\n${printRecord}`, { REAL_PICK: '1' });
+        assert.equal(picked.status, 0, picked.stderr);
+        const record = f.saveOwner(picked.stdout.trim());
+        const owner = JSON.parse(record);
+        assert.equal(owner.family, family);
+        assert.equal(owner.effort, '');
+
+        const dispatch = `${prepare}\n${restore}\n${availability}\n`;
+        const fresh = f.run(dispatch + cliDispatch, { BUILDER_RECORD: record });
+        const resumed = f.run(dispatch + resumeDispatch, { BUILDER_RECORD: record, ...session });
+        assert.deepEqual([fresh.status, resumed.status], [0, 0], `fresh: ${fresh.stderr}resume: ${resumed.stderr}`);
+
+        const output = ['-o', path.join(f.work, 'result.md'), fs.readFileSync(f.brief, 'utf8')];
+        assert.deepEqual(f.calls('codex').map(({ args }) => args), [
+          ['exec', '--skip-git-repo-check', '--sandbox', 'workspace-write', '-m', models[family], '--json', ...output],
+          ['exec', 'resume', session.THREAD_ID, '--skip-git-repo-check', '-m', models[family], ...output],
+        ]);
+        assert.deepEqual(picks(f), [['--pick', 'builder', '--json']]);
+      });
+    }
+
     test(`${scope}: one and two exclusions preserve picker argument boundaries`, () => {
       const f = fixture(shell);
       for (const assignment of ['EXCLUDED=("one family")', 'EXCLUDED=("one family" other)']) {
