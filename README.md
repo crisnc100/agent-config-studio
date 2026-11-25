@@ -619,6 +619,7 @@ leave the file as it is.
 ```
 model-id --role reviewer
 model-id --role builder --json
+model-id --pick builder --json
 model-id --flavor sol
 model-id --roles
 ```
@@ -652,14 +653,31 @@ beside "reviewer = Opus high" needs no change to Opus's default. `source` in
 
 Each family's flavor in `roles.json` merges over the shipped one field by
 field: a list replaces the shipped list, and `null` clears a shipped field.
-Roles do not merge: a role is what your file says. Nothing reads a catalog or
-swaps a family on its own; the Models panel only warns when a role's family is
-retiring, gone, or has a malformed id.
+Your file defines the full lineup for each role. The Models panel warns when a
+role's family is retiring, gone, or has a malformed id.
 
 In the Models panel, the **Roles** table edits and resets each role (your own
 roles can be added and deleted), and each family's row edits its flavor. Every
 save is versioned in history and refused if `roles.json` changed since the
 panel read it. A field the form does not know is refused, never dropped.
+
+In **Models → Roles → builder → Edit**, choose **First available** (the
+default), **Random per task**, or **Jev task fit**. Random gives each eligible
+lineup member the same chance. Jev compares the task summary with the saved
+model profiles and uses the first eligible member if there is no confident
+choice. A new frontend visual design preference can select an eligible
+family when the build explicitly calls for new visual direction. The
+optional cached-usage check skips a family with a current limit or less
+remaining usage than the configured reserve.
+
+The Claude and Codex build skills save one family and effort in the task
+plan or handoff, then use them for phases, fixes and resumes. An explicitly
+named builder in the lineup takes precedence. The picker also accepts
+`--design`, `--task-file <path>` for Jev task fit and repeated
+`--exclude <family>` flags for recorded replacements. When no family is
+eligible, it exits with the reasons. `model-id --role builder` still reports
+the first unpaused family in the configured order. Run `acs install-model-id`
+and `acs packs update build` to use the current resolver and build skills.
 
 **Describe your models** takes a plain-language description and has Claude,
 at the Assist registry's default model and with no tools at all, turn it into

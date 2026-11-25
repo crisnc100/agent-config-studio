@@ -1,6 +1,6 @@
 ---
 name: build
-description: Build something through Frame → Bar → Judge from a Codex seat. Codex orchestrates; the builder role's family implements; the advisor role attacks the plan (Bounce) and the judge role grades the result (Grade), cross-vendor preferred; the human judges. State lives in files. Use for any real build where being correct matters — not a two-minute edit.
+description: Build something through Frame → Bar → Judge from a Codex seat. Codex orchestrates; a builder-role family implements; the advisor role attacks the plan (Bounce) and the judge role grades the result (Grade), cross-vendor preferred; the human judges. State lives in files. Use for any real build where being correct matters — not a two-minute edit.
 ---
 
 # build — Frame, Bar, Judge (Codex seat edition)
@@ -22,11 +22,101 @@ Families come from the ACS roles (`model-id --role <role>`); the CLI follows the
 | Understand | codex (this seat) | read the code, map it, write `context.md` — conclusions, not dumps |
 | Shape: draft plan + bar | codex | native |
 | Shape: **Bounce** (attack the plan) | the `advisor` role's family, read-only | gate commands below |
-| Build | the `builder` role's family (this seat when it is that family), or the one the driver names | the phase loop below |
+| Build | the family recorded for this task | the phase loop below |
 | **Grade** (verify vs bar) | the `judge` role's family, read-only, cross-vendor preferred | gate commands below |
 | Judge | the driver | yes/no against the bar |
 
 **Grader swap.** Cross-vendor checks follow the review gate's crossFamily setting (default prefer: another vendor when available, never a blocker; the run names who checked and why). Read it once with the gate commands below (`CROSS_FAMILY`). With `prefer`, the grader should not share the builder's vendor: if the `judge` family does, prefer the `advisor` role's second opinion (`alt` in `model-id --role advisor`) when it is from the other vendor. Never wait on a grader: if the preferred one is unavailable, use the other at once. With `off`, grade with the `judge` role's family. Say in the handoff which one ran and, when it was same-vendor, why. If no gate can run at all, the gate is **NOT RUN** — report it that way, never as a pass. Judgment-role families never build.
+
+## Choose the builder once per task
+
+First read the task's plan and latest handoff. If either has a builder record, load the current record into `BUILDER_RECORD` before routing any phase, fix or resume. A fresh worker still uses the same family and effort. An explicit operator change or a recorded replacement updates that record.
+
+For a new task, an operator-named member of the configured builder lineup wins (`/build <family> [effort]` or plain English). An explicit name follows the direct-family pause behavior. Otherwise use the configured picker once. At Frame, set `NEW_VISUAL_DESIGN=true` only if the task needs genuinely new frontend visual direction. Frontend logic, implementation of a settled design, backend and database work use the regular strategy. When the task-fit strategy is configured, set `TASK_SUMMARY` to the absolute path of a short regular file with the objective and constraints, using the existing build materials.
+
+The commands use Bash or zsh and jq. If jq is unavailable, run the same resolver commands and read their JSON directly. Set `NAMED_BUILDER` and `NAMED_EFFORT` only from the operator's explicit request. Initialize `EXCLUDED=()` for a new task or fill it with the recorded family exclusions for a replacement. Leave `BUILDER_RECORD` empty only when choosing a new owner.
+
+```bash
+if [ -z "${BUILDER_RECORD:-}" ]; then
+  if [ -n "${NAMED_BUILDER:-}" ]; then
+    BUILDER=$NAMED_BUILDER
+    ROLE_REPORT=$(model-id --roles --json) || true
+    if ! jq -e --arg family "$BUILDER" '.roles.builder | ((.use // []) + [.skipped[]?.family]) | index($family) != null' >/dev/null <<< "$ROLE_REPORT"; then
+      printf '%s\n' 'Choose a member of the configured builder lineup in ACS → Models → Roles.' >&2
+      exit 2
+    fi
+    BUILDER_ID=$(model-id "$BUILDER" || echo "MODEL-ID-UNRESOLVED-$BUILDER")
+    case "$BUILDER_ID" in MODEL-ID-UNRESOLVED-*|'') exit 2 ;; esac
+    EFFORT=${NAMED_EFFORT:-}
+    [ -n "$EFFORT" ] || EFFORT=$(model-id --effort "$BUILDER" --role builder --no-alt) || exit 2
+    BUILDER_RECORD=$(jq -nc --arg family "$BUILDER" --arg id "$BUILDER_ID" --arg effort "$EFFORT" \
+      '{family:$family,id:$id,effort:$effort,mode:"explicit",reason:"operator named this builder",operatorNamed:true}')
+  else
+    PICK_ARGS=(--pick builder --json)
+    [ "${NEW_VISUAL_DESIGN:-}" != true ] || PICK_ARGS+=(--design)
+    [ -z "${TASK_SUMMARY:-}" ] || PICK_ARGS+=(--task-file "$TASK_SUMMARY")
+    for EXCLUDED_FAMILY in "${EXCLUDED[@]}"; do
+      PICK_ARGS+=(--exclude "$EXCLUDED_FAMILY")
+    done
+    PICK_STATUS=0
+    PICK=$(model-id "${PICK_ARGS[@]}") || PICK_STATUS=$?
+    if ! jq -e '.role == "builder"' >/dev/null 2>&1 <<< "$PICK"; then
+      printf '%s\n' 'Builder picker unavailable. Run acs install-model-id.' >&2
+      exit 2
+    fi
+    if [ "$PICK_STATUS" -ne 0 ]; then
+      printf '%s\n' "$PICK" >&2
+      exit "$PICK_STATUS"
+    fi
+    BUILDER_RECORD=$(jq -c '. + {operatorNamed:false}' <<< "$PICK")
+  fi
+fi
+```
+
+When choosing an owner, apply the operator's requested effort when it applies to that family. Otherwise follow any existing seat rule for that family, such as a medium/xhigh choice. Use the picker's effort when no override applies. If applying an override, put it in `EFFORT_OVERRIDE` and update the record before saving it.
+
+```bash
+BUILDER_RECORD=$(jq -ce --arg effort "$EFFORT_OVERRIDE" '. + {effort:$effort,effortOverride:$effort}' <<< "$BUILDER_RECORD") || exit 2
+```
+
+Save the JSON from `BUILDER_RECORD` in `plan.md` or the existing handoff. It records the family, model ID, effective effort, mode, reason and `operatorNamed`. Keep the Frame decision and cumulative exclusions there as well. In lightweight mode use the existing task brief or handoff. On resume or a fix, use the saved effective effort even when it is empty.
+
+```bash
+BUILDER=$(jq -er '.family | strings | select(length > 0)' <<< "$BUILDER_RECORD") || exit 2
+BUILDER_ID=$(jq -er '.id | strings | select(length > 0)' <<< "$BUILDER_RECORD") || exit 2
+EFFORT=$(jq -er '.effort | strings' <<< "$BUILDER_RECORD") || exit 2
+```
+
+Log any confirmed quota limit or startup failure before replacing a builder. Check the tool's diagnostics and the worktree. Generic errors, timeouts and cancellation can leave edits. Hand off completed commits, checks and results, remaining work and any partial changes (including untracked files) before dispatching a replacement. Preserve earlier exclusions, add the failed family with the evidence, clear the current record and named-family input for the new pick, and use every exclusion with the original Frame decision. Save the replacement record and report the change. Each failed family is tried at most once in the automatic replacement chain. When the picker reports no eligible builder, show its reasons and stop that chain.
+
+For quality escalation, first fix any gap in the brief and re-issue it to the same family. If an adequate brief still misses the same criterion twice, use another eligible family with the same handoff and record the quality reason. Switch automatically when the picker chose the family. For a quality switch away from an operator-named family, preserve the operator's existing choice to escalate or hold. If both builders miss the criterion, surface the scope issue to the operator.
+
+## Dispatch the recorded builder
+
+Give each worker the objective, read-first files, constraints, validation and stop condition. The worker runs the checks and commits the phase. The orchestrator handles reviews, model calls, pushes and PRs. The worker never merges. Point `BRIEF_FILE` at that complete phase brief. A new phase uses a fresh worker with the plan and handoff. For a callback or an unfinished phase, use its saved worker session when the route supports resume. Otherwise hand off the checkpoint using the same family and effort. Fixes use the active task owner and the same dispatch rules.
+
+- For a `gpt-…` model, use a native Codex subagent on the recorded model and effort. Select those explicitly in the native agent controls and give the worker the self-contained brief. Use fresh context if required to set model and effort. If the native controls cannot honor the recorded settings, surface that blocker.
+- For a `claude-…` model, use the cross-vendor CLI from the worktree. Leave `CLAUDE_SESSION_ID` unset for a fresh worker. On a callback or resume, use the `session_id` identified in that worker's JSON result.
+
+```bash
+EFFORT_FLAG=()
+[ -z "$EFFORT" ] || EFFORT_FLAG=(--effort "$EFFORT")
+SESSION_FLAG=()
+[ -z "${CLAUDE_SESSION_ID:-}" ] || SESSION_FLAG=(--resume "$CLAUDE_SESSION_ID")
+claude -p "$(cat "$BRIEF_FILE")" --model "$BUILDER_ID" "${EFFORT_FLAG[@]}" "${SESSION_FLAG[@]}" --permission-mode acceptEdits --strict-mcp-config --mcp-config '{"mcpServers":{}}' --output-format json </dev/null
+```
+
+**Antigravity builder.** For a `gemini-…` model, run the recorded family and effort through the native builder wrapper:
+
+```bash
+WORKTREE=$(git rev-parse --show-toplevel) || exit 2
+WORKTREE=$(cd "$WORKTREE" && pwd -P) || exit 2
+ask-model --family "$BUILDER" --build --cwd "$WORKTREE" --effort "$EFFORT" --prompt-file "$BRIEF_FILE" --json
+```
+
+A successful call exits 0 with `build.execution: "native"`, `build.completed: true` and `served.verified: false`. It uses normal agy permissions. Inspect the actual worktree and commits after a call. A failed call can leave edits. Record the dispatched family as the builder and report the served model as unverified.
+
+Grok is a judgment lane. If the recorded ID has no supported builder route, report the configuration blocker.
 
 ## The four phases (state in `builds/<slug>/`, re-read each pass)
 
@@ -88,6 +178,12 @@ family, model and non-empty criteria are required. Optional top-level keys: vend
 **Branch on ask-model's exit code, and never pipe the call** — piping the output masks a failure as exit 0. 0 is the verdict; 2 means another model answered (not a gate result); 3 means the gate's CLI is not installed (use the other judgment family at once); 4 means the call failed. A call that never reached the API fails with `API Error: Unable to connect to API (ENOTFOUND)` on stderr, which means Codex's sandbox denied it network (`network_access` under `[sandbox_workspace_write]` in `~/.codex/config.toml`, or run the call escalated). That is a gate that **did not run**: fix it, use the other judgment family, or report NOT RUN — never report it as a pass.
 
 ## Record and close (orchestrator only)
+
+For a phase review or a finished-build review, use the recorded family that actually authored the reviewed work. Log each phase author and include any earlier authors in the review handoff when a replacement contributed to the branch. The grader swap compares the vendor of that builder's recorded model ID. Use the installed review runtime and the review skill's normal flags. Set `PLAN_FILE` and `REVIEW_INTENT` from the task. For a task without a plan, omit the plan flag.
+
+```bash
+REVIEW_AUTHOR="$BUILDER" node "$REVIEW_SCRIPT" --plan "$PLAN_FILE" "$REVIEW_INTENT"
+```
 
 Use the installed runtime. Record the Grade against the same committed HEAD it saw. Commit fixes before the one recheck of failed criteria, then record it. Close once, at the tip: no phase Grade is closed mid-build, and no phase record grants coverage. The last phase's Grade gets a criteria close at the tip, after the tip review is recorded: its findings are `carried` to that review, which reads them as open findings, and the last phase's review stays findings-only the same way:
 

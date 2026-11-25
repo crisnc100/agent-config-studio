@@ -1,6 +1,6 @@
 ---
 name: build
-description: "Build something through the Frame -> Bar -> Judge loop. Runs four phases (Understand, Shape, Build, Judge) — the session model orchestrates and advises, a builder-role family types (guided phases, callbacks on demand), the advisor role attacks the plan (Bounce), the judge role grades the result (Grade, cross-vendor preferred), and the human judges. Pick the implementer and effort with '/build <family> [effort]' (or plain English); unspecified means the orchestrator picks from the builder role. Use for any real build where you want it done right and self-correcting. Scales down: a lightweight mode handles small single-outcome work (one implementer call, no plan/Bounce/Grade scaffold) so small-but-real tasks route here too — only true two-minute edits stay out."
+description: "Build something through the Frame -> Bar -> Judge loop. Runs four phases (Understand, Shape, Build, Judge) — the session model orchestrates and advises, a builder-role family types (guided phases, callbacks on demand), the advisor role attacks the plan (Bounce), the judge role grades the result (Grade, cross-vendor preferred), and the human judges. Pick the implementer and effort with '/build <family> [effort]' (or plain English); otherwise the configured builder strategy chooses once per task. Use for any real build where you want it done right and self-correcting. Scales down: a lightweight mode handles small single-outcome work (one implementer call, no plan/Bounce/Grade scaffold) so small-but-real tasks route here too — only true two-minute edits stay out."
 ---
 
 # /build — the Frame, Bar, Judge build loop
@@ -47,22 +47,74 @@ In lightweight mode: state the outcome and the bar **inline in chat** (the drive
 | Understand (explore) | orchestrator + read-only exploration subagents | conclusions only come back; bulk file dumps stay out of the orchestrator's context |
 | Shape: draft spec + bar | orchestrator | native |
 | Shape: **Bounce** (attack the plan) | `advisor` role, read-only | gate command below |
-| Build (guided steps) | `builder` role; the user's named family and effort win (below) | the guided-step loop below |
+| Build (guided steps) | `builder` role; the recorded family and effort (below) | the guided-step loop below |
 | **Grade** (verify build vs bar) | `judge` role, read-only, cross-vendor preferred (below) | gate command below |
 | Judge | the human | yes/no against the bar |
 
-### Choosing the implementer — `/build <family> [effort]`
+**Grader swap.** Cross-vendor checks follow the review gate's crossFamily setting (default prefer: another vendor when available, never a blocker; the run names who checked and why). Read it once, below (`CROSS_FAMILY`). With `prefer`, grade with the `judge` role's family unless it shares the builder's vendor; then prefer the `advisor` role's second opinion when it is from the other vendor. **Never wait on a grader:** if the preferred one is out of quota or unavailable, use the other right away. With `off`, grade with the `judge` role's family. The Judge handoff says which grader ran and, when it was same-vendor, why.
 
-Name a builder-role family and it wins for this run: `/build <family>`, `/build <family> <effort>`, or plain English ("build this with <family>"). **A named lane is binding for the entire run — every phase, start to finish.** The orchestrator does not re-route mid-build, does not "upgrade" a phase it finds hard, and does not silently fall back. No lane named → pick from the `builder` role using each family's flavor (`model-id --flavor <family>`: what it is good at and what to watch for — an over-builder needs boundaries; taste matters for frontend, design and copy), and say which and why in one line. Record which lane won or lost — the ranking earns itself.
+### Choose the builder once per task
 
-**Effort** comes from the builder role in ACS (that family's effort there, else its flavor effort) unless the user names one; a named effort wins for the run. It is resolved once, before the first build call (below).
+First read the task's plan and latest handoff. If either has a builder record, load the current record into `BUILDER_RECORD` before routing any phase, fix or resume. A fresh worker still uses the same family and effort. An explicit operator change or a recorded replacement updates that record.
 
-The one exception is the standing escalation rule below, and with a named lane it is **not** silent: if the implementer misses the same criterion twice after the brief has been sharpened, the orchestrator says so and asks before changing lanes. The user chose the lane; leaving it is the user's call.
+For a new task, an operator-named member of the configured builder lineup wins (`/build <family> [effort]` or plain English). An explicit name follows the direct-family pause behavior. Otherwise use the configured picker once. At Frame, set `NEW_VISUAL_DESIGN=true` only if the task needs genuinely new frontend visual direction. Frontend logic, implementation of a settled design, backend and database work use the regular strategy. When the task-fit strategy is configured, set `TASK_SUMMARY` to the absolute path of a short regular file with the objective and constraints, using the existing build materials.
 
-- The choice picks the **implementer only**. The orchestrator, the Bounce, and the human Judge don't move.
-- **Grader swap.** Cross-vendor checks follow the review gate's crossFamily setting (default prefer: another vendor when available, never a blocker; the run names who checked and why). Read it once, below (`CROSS_FAMILY`). With `prefer`, grade with the `judge` role's family unless it shares the builder's vendor; then prefer the `advisor` role's second opinion when it is from the other vendor. **Never wait on a grader:** if the preferred one is out of quota or unavailable, use the other right away. With `off`, grade with the `judge` role's family. The Judge handoff says which grader ran and, when it was same-vendor, why.
-- Judgment-role families never build: they type specs and verdicts, not code. An explicit user demand still wins, but the skill never routes there on its own.
-- A one-run lane choice never changes the durable routing; change defaults in ACS.
+The commands use Bash or zsh and jq. If jq is unavailable, run the same resolver commands and read their JSON directly. Set `NAMED_BUILDER` and `NAMED_EFFORT` only from the operator's explicit request. Initialize `EXCLUDED=()` for a new task or fill it with the recorded family exclusions for a replacement. Leave `BUILDER_RECORD` empty only when choosing a new owner.
+
+```bash
+if [ -z "${BUILDER_RECORD:-}" ]; then
+  if [ -n "${NAMED_BUILDER:-}" ]; then
+    BUILDER=$NAMED_BUILDER
+    ROLE_REPORT=$(model-id --roles --json) || true
+    if ! jq -e --arg family "$BUILDER" '.roles.builder | ((.use // []) + [.skipped[]?.family]) | index($family) != null' >/dev/null <<< "$ROLE_REPORT"; then
+      printf '%s\n' 'Choose a member of the configured builder lineup in ACS → Models → Roles.' >&2
+      exit 2
+    fi
+    BUILDER_ID=$(model-id "$BUILDER" || echo "MODEL-ID-UNRESOLVED-$BUILDER")
+    case "$BUILDER_ID" in MODEL-ID-UNRESOLVED-*|'') exit 2 ;; esac
+    EFFORT=${NAMED_EFFORT:-}
+    [ -n "$EFFORT" ] || EFFORT=$(model-id --effort "$BUILDER" --role builder --no-alt) || exit 2
+    BUILDER_RECORD=$(jq -nc --arg family "$BUILDER" --arg id "$BUILDER_ID" --arg effort "$EFFORT" \
+      '{family:$family,id:$id,effort:$effort,mode:"explicit",reason:"operator named this builder",operatorNamed:true}')
+  else
+    PICK_ARGS=(--pick builder --json)
+    [ "${NEW_VISUAL_DESIGN:-}" != true ] || PICK_ARGS+=(--design)
+    [ -z "${TASK_SUMMARY:-}" ] || PICK_ARGS+=(--task-file "$TASK_SUMMARY")
+    for EXCLUDED_FAMILY in "${EXCLUDED[@]}"; do
+      PICK_ARGS+=(--exclude "$EXCLUDED_FAMILY")
+    done
+    PICK_STATUS=0
+    PICK=$(model-id "${PICK_ARGS[@]}") || PICK_STATUS=$?
+    if ! jq -e '.role == "builder"' >/dev/null 2>&1 <<< "$PICK"; then
+      printf '%s\n' 'Builder picker unavailable. Run acs install-model-id.' >&2
+      exit 2
+    fi
+    if [ "$PICK_STATUS" -ne 0 ]; then
+      printf '%s\n' "$PICK" >&2
+      exit "$PICK_STATUS"
+    fi
+    BUILDER_RECORD=$(jq -c '. + {operatorNamed:false}' <<< "$PICK")
+  fi
+fi
+```
+
+When choosing an owner, apply the operator's requested effort when it applies to that family. Otherwise follow any existing seat rule for that family, such as a medium/xhigh choice. Use the picker's effort when no override applies. If applying an override, put it in `EFFORT_OVERRIDE` and update the record before saving it.
+
+```bash
+BUILDER_RECORD=$(jq -ce --arg effort "$EFFORT_OVERRIDE" '. + {effort:$effort,effortOverride:$effort}' <<< "$BUILDER_RECORD") || exit 2
+```
+
+Save the JSON from `BUILDER_RECORD` in `plan.md` or the existing handoff. It records the family, model ID, effective effort, mode, reason and `operatorNamed`. Keep the Frame decision and cumulative exclusions there as well. In lightweight mode use the existing task brief or handoff. On resume or a fix, use the saved effective effort even when it is empty.
+
+```bash
+BUILDER=$(jq -er '.family | strings | select(length > 0)' <<< "$BUILDER_RECORD") || exit 2
+BUILDER_ID=$(jq -er '.id | strings | select(length > 0)' <<< "$BUILDER_RECORD") || exit 2
+EFFORT=$(jq -er '.effort | strings' <<< "$BUILDER_RECORD") || exit 2
+```
+
+Log any confirmed quota limit or startup failure before replacing a builder. Check the tool's diagnostics and the worktree. Generic errors, timeouts and cancellation can leave edits. Hand off completed commits, checks and results, remaining work and any partial changes (including untracked files) before dispatching a replacement. Preserve earlier exclusions, add the failed family with the evidence, clear the current record and named-family input for the new pick, and use every exclusion with the original Frame decision. Save the replacement record and report the change. Each failed family is tried at most once in the automatic replacement chain. When the picker reports no eligible builder, show its reasons and stop that chain.
+
+For quality escalation, first fix any gap in the brief and re-issue it to the same family. If an adequate brief still misses the same criterion twice, use another eligible family with the same handoff and record the quality reason. Switch automatically when the picker chose the family. For a quality switch away from an operator-named family, preserve the operator's existing choice to escalate or hold. If both builders miss the criterion, surface the scope issue to the operator.
 
 ### The guided-phase loop (advisor on demand, not a micromanager)
 
@@ -80,11 +132,9 @@ The orchestrator plans in phases and advises when asked; the implementer works a
    - the phase is complete (the normal checkpoint).
    Every callback carries a **recommended answer** so the orchestrator can reply in one line. Anything derivable from the brief, the plan, or the repo: resolve it and keep moving.
 4. The orchestrator answers callbacks (the agent continues with its context intact), reviews the phase checkpoint against `plan.md` — right direction? bar still reachable? — then dispatches the next phase, or corrects course and re-issues this one. Callback frequency is itself a signal: three or more callbacks in one phase means the plan under-specified it — fix `plan.md` and re-issue rather than answering one-offs; zero callbacks through a genuinely complex phase means review that checkpoint harder, not lighter. A builder that goes idle without a callback or a phase-complete report is stalled: message it then, rather than waiting on it.
-5. **Codex-lane steering uses session resume, not re-invocation.** Capture the `thread_id` from the first phase's `--json` output and keep it for the whole build. Every callback answer and every subsequent phase goes through `codex exec resume <thread_id>` — codex continues with its full context intact, so a one-line answer stays a one-line answer instead of a rebuilt brief. Only start a fresh session if you are deliberately resetting a poisoned context.
+5. Give a fresh worker the plan and handoff at each phase boundary. For a callback or an unfinished phase, use its saved worker session when the route supports resume. Otherwise hand off the checkpoint using the same family and effort. Fixes use the active task owner and the same dispatch rules.
 
 **Advisor consult points (orchestrator only).** When the advisor skill is installed, use it at exactly two moments: (a) Understand/Shape while scope is still being set, before `plan.md` exists — once the plan is written, the Bounce is the adversarial gate, don't double-spend; (b) a builder callback raises a scope/architecture call the orchestrator itself is unsure of — consult `/advisor`, validate the advice, answer the builder in one line. Builders never invoke /advisor; a builder's route to advice IS the callback contract. One chain of command.
-
-This keeps the expensive model's tokens on judgment (briefs, callback answers, checkpoint reviews — all small) and the volume tokens on the implementer. **Standing escalation — but fix the brief before the builder:** if the implementer misses the bar twice on the same step, first re-read the phase brief; if the spec under-determined the choice, sharpen the brief and re-issue at the same lane (a better brief is cheaper than a bigger model). If the brief was adequate, redo the step on another builder-role family; if both miss the same criterion, that is the mis-scope signal — stop and surface it to the driver rather than climbing further. Judge the output, not the price tag. **Without asking when the orchestrator picked the lane; ask first when the user named it** (`/build <family>`) — a named lane is the user's decision, so surface the stuck criterion and let them choose to escalate or hold.
 
 The gate model is called at the **gates** (once after the plan is drafted, once after the build completes), never inside the per-step build loop. The cheap, fast, deterministic `verify.sh` / tests are what the builder loops against; the gate model is the expensive, independent, reasoned check on top. Two layers, not one.
 
@@ -95,8 +145,6 @@ No command names a model. Resolve the family, its id and its effort from the rol
 ```
 eval "$(model-id --role advisor || echo 'echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1')"   # Bounce: sets family=…, id=…, effort=… (alt=… is the second opinion)
 eval "$(model-id --role judge || echo 'echo "model-id failed: run acs install-model-id (see the Agent Config Studio README)" >&2; exit 1')"     # Grade: the same, swapped per the grader rule
-BUILDER=<family>                    # `model-id --role builder`, or the family the user named; its id: "$(model-id "$BUILDER" || echo "MODEL-ID-UNRESOLVED-$BUILDER")"
-EFFORT=<effort>                     # the effort the user named; none named: EFFORT= and resolve it below
 ```
 
 The grader swap's setting, read once before the Grade:
@@ -127,36 +175,39 @@ ask-model picks the CLI from the id, keeps it read-only with no MCP, and checks 
 
 **Bounce prompt** (critique a plan, no code yet): "Read plan.md and context.md in this folder. You are an adversarial reviewer with no attachment to this plan. Attack it: what is missing, what will break, what edge cases and failure modes did the author miss, and where is the acceptance bar too weak to catch a bad build? Be concrete. Do not rewrite the plan; list the gaps and why each matters."
 
-**The builder's effort** — set once, before the first build call, and used by every build call below:
+**Dispatch the recorded builder.** Give each worker the objective, read-first files, constraints, validation and stop condition. The worker runs the checks and commits the phase. The orchestrator handles reviews, model calls, pushes and PRs. The worker never merges. Point `BRIEF_FILE` at that complete phase brief and `PHASE_RESULT` at the checkpoint output file. Use the model ID's prefix to route.
+
+- For a `claude-…` model, use a native Claude subagent on the recorded model and effort. Set both through the native agent controls or the agent's model and effort configuration. If the native controls cannot honor the recorded settings, surface that blocker.
+- For a `gpt-…` model, use the cross-vendor CLI from the worktree. Start a fresh session for every fresh worker with `workspace-write`.
+
 ```bash
-# A named effort wins; else that family's effort in the builder role (its members[] entry, else the role's
-# effort); else the family's flavor effort. Still empty: none is set, so the calls leave the flag out.
-[ -n "$EFFORT" ] || EFFORT=$(model-id --effort "$BUILDER" --role builder --no-alt || true)
-EFFORT_FLAG=(); [ -z "$EFFORT" ] || EFFORT_FLAG=(-c "model_reasoning_effort=$EFFORT")   # never an empty effort
+EFFORT_FLAG=()
+[ -z "$EFFORT" ] || EFFORT_FLAG=(-c "model_reasoning_effort=$EFFORT")
 ```
 
-**Build — phase 1 on a codex-CLI builder (the only call that starts a session).** `--json` so you can capture the `thread_id`; `-o` so the checkpoint lands in a file instead of buried in event noise. This is the ONLY codex call that gets `--sandbox workspace-write`:
+```bash
+codex exec --skip-git-repo-check --sandbox workspace-write -m "$BUILDER_ID" "${EFFORT_FLAG[@]}" \
+  --json -o "$PHASE_RESULT" "$(cat "$BRIEF_FILE")" </dev/null
 ```
-codex exec --skip-git-repo-check --sandbox workspace-write -m "$(model-id "$BUILDER" || echo "MODEL-ID-UNRESOLVED-$BUILDER")" "${EFFORT_FLAG[@]}" \
-  --json -o builds/<slug>/phase1-result.md \
-  "Objective: <what exists when this phase is done>
-   Read first: plan.md, context.md, <relevant files>
-   Steps: <each step with its pass/fail check>
-   Constraints: <files in scope; no new deps unless plan.md names them; no scope creep; commit at phase end; run tests in the foreground and never end a turn waiting on a background job; never push, open a PR or run reviews, grades or other models>
-   Validate: ./verify.sh — run after every step, read the failure, fix, re-run
-   Stop when: every check in this phase passes, OR a choice is not determined by this brief —
-              then stop and state the choice with your recommended answer.
-   Do not delete, skip, weaken, or narrow tests or checks to make something pass." </dev/null 2>/dev/null
-```
-Grab the session id from the first JSONL line: `{"type":"thread.started","thread_id":"<uuid>"}`. Pipe through `head -1` or parse with `jq -r 'select(.type=="thread.started").thread_id'`. Read the checkpoint from the `-o` file.
 
-**Build — every later phase, and every callback answer** (same session, context intact):
+Record the `thread_id` from the `thread.started` JSONL event. For a callback or resume within that phase, `THREAD_ID` is that worker's saved identifier. The session inherits its sandbox. Use its explicit ID so a gate session in the same worktree cannot be selected by mistake.
+
+```bash
+codex exec resume "$THREAD_ID" --skip-git-repo-check -m "$BUILDER_ID" "${EFFORT_FLAG[@]}" \
+  -o "$PHASE_RESULT" "$(cat "$BRIEF_FILE")" </dev/null
 ```
-codex exec resume <thread_id> --skip-git-repo-check -m "$(model-id "$BUILDER" || echo "MODEL-ID-UNRESOLVED-$BUILDER")" "${EFFORT_FLAG[@]}" \
-  -o builds/<slug>/phase<N>-result.md \
-  "<the next phase brief, or the one-line answer to the callback>" </dev/null 2>/dev/null
+
+**Antigravity builder.** For a `gemini-…` model, run the recorded family and effort through the native builder wrapper:
+
+```bash
+WORKTREE=$(git rev-parse --show-toplevel) || exit 2
+WORKTREE=$(cd "$WORKTREE" && pwd -P) || exit 2
+ask-model --family "$BUILDER" --build --cwd "$WORKTREE" --effort "$EFFORT" --prompt-file "$BRIEF_FILE" --json
 ```
-`resume` does NOT accept `-s/--sandbox` — it inherits the sandbox policy from the session it resumes, which is why phase 1 must be the one that sets `workspace-write`. It does accept `-m`, `-c`, `-o`, `--json`, `--skip-git-repo-check`. Prefer an explicit `thread_id` over `--last`: the Bounce and Grade gates run in the same cwd, so `--last` can silently resume the wrong session. On a claude-CLI builder the phases go to a subagent on that family at the run's effort instead of these codex calls; the gates stay on their roles regardless of lane.
+
+A successful call exits 0 with `build.execution: "native"`, `build.completed: true` and `served.verified: false`. It uses normal agy permissions. Inspect the actual worktree and commits after a call. A failed call can leave edits. Record the dispatched family as the builder and report the served model as unverified.
+
+Grok is a judgment lane. If the recorded ID has no supported builder route, report the configuration blocker.
 
 **Grade prompt** (verify the finished build against the bar, through the gate command for the grader the swap rule picked): "Read the changed files (e.g. the source files and verify.sh) and grade against this bar. For EACH criterion output PASS or FAIL with specific evidence (file/line or behavior). Be strict: if not clearly met, FAIL. Also flag any real bug outside the criteria. Return exactly the JSON specified below, no Markdown or prose. Criteria: <paste the criteria from plan.md here>". The orchestrator appends this output contract verbatim to every Grade and recheck prompt, substituting the resolved grader family and model id:
 
@@ -169,7 +220,15 @@ family, model and a non-empty criteria array are required. vendor (codex, claude
 `codex review` does NOT accept `-m`, and its positional-prompt parsing is unreliable, so a codex-CLI grade goes through ask-model like any other.
 The verdict prints on stdout; logs go to stderr. (A read-only sandbox can't run a `verify.sh` that writes temp files, which is fine: the deterministic checks already ran; the grade is the independent reasoned review on top.)
 
-**Record and close (orchestrator only).** Use the installed runtime. Save the Grade's JSON to builds/<slug>/grade.json and record it against the same committed HEAD. Commit fixes before the one failed-criterion recheck, then record that JSON. Close once, at the tip: no phase Grade is closed mid-build, and no phase record grants coverage. The last phase's Grade gets a criteria close at the tip, after the tip review is recorded: its findings are `carried` to that review, which reads them as open findings, and the last phase's review stays findings-only the same way:
+### Record and close (orchestrator only)
+
+For a phase review or a finished-build review, use the recorded family that actually authored the reviewed work. Log each phase author and include any earlier authors in the review handoff when a replacement contributed to the branch. The grader swap compares the vendor of that builder's recorded model ID. Use the installed review runtime and the review skill's normal flags. Set `PLAN_FILE` and `REVIEW_INTENT` from the task. For a task without a plan, omit the plan flag.
+
+```bash
+REVIEW_AUTHOR="$BUILDER" node "$REVIEW_SCRIPT" --plan "$PLAN_FILE" "$REVIEW_INTENT"
+```
+
+Use the installed runtime. Save the Grade's JSON to builds/<slug>/grade.json and record it against the same committed HEAD. Commit fixes before the one failed-criterion recheck, then record that JSON. Close once, at the tip: no phase Grade is closed mid-build, and no phase record grants coverage. The last phase's Grade gets a criteria close at the tip, after the tip review is recorded: its findings are `carried` to that review, which reads them as open findings, and the last phase's review stays findings-only the same way:
 
 ```bash
 REVIEW_SCRIPT="$HOME/.agent-config-studio/review-gate/review.mjs"
