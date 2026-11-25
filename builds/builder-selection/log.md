@@ -171,3 +171,22 @@ Focused checks ran on Node 23.11.1.
 The manual `node packs/review-gate/tests/review.packs.test.mjs` passed 24 checks and reproduced only the baseline model-name lint failure at `packs/KNOWN-LIMITS.md:53–54`. Its named-effort assertion still pins the short circuit, selected builder, `--no-alt` and calling-shell exit 2. It also requires the subshell exit 2. The production model lint and its test are unchanged. `node --check tests/build-builder-skill.mjs`, `node --check packs/review-gate/tests/review.packs.test.mjs` and `git diff --check` passed.
 
 A byte comparison against ad050db confirmed every Bash block outside the two selection blocks is identical, including the live-tested Claude dispatch and scoped rules. The docs-table citation still points to the picker arguments at line 63 of the Codex skill. This repair used fixture tools and the offline resolver. It made zero live provider calls.
+
+## Empty effort in strict Bash Codex dispatch
+
+The bounded review 2026-11-25-17-10-56-3a7b2d confirmed f1, MEDIUM 15/100 (likelihood 3/10 × impact 5/10), in the Claude skill's fresh and resumed Codex launches. Both now use conditional expansion for the optional effort array. The fresh launch retains the `workspace-write` sandbox, and the resumed launch retains its saved thread ID. The live-tested Claude launch and rules remain byte-identical.
+
+The test gives the real picker a version 2 configuration with a single Codex builder and no effort setting. It confirms the saved effort is empty, launches both paths with the same owner and checks their full arguments and single picker call. On 9c279e7, `node --test --test-name-pattern='empty resolved effort' tests/build-builder-skill.mjs` passed in zsh 5.9 and failed in Bash 3.2.57. Both Bash launches exited 1 with `EFFORT_FLAG[@]: unbound variable`. Both shells passed the same regression after the fix.
+
+Focused checks passed on Node 23.11.1. The existing build launch contracts are in `packs/review-gate/tests/review.skills.test.mjs`.
+
+| Command | Passed |
+| --- | ---: |
+| `node tests/build-builder-skill.mjs` | 38 |
+| `node packs/review-gate/tests/review.skills.test.mjs` | 26 |
+| `node tests/models.mjs` | 64 |
+| `node tests/guards.mjs` | 11 |
+| `node tests/setup-guards.mjs` | 110 |
+| `node tests/suite-coverage.mjs` | 33 |
+
+`node --check tests/build-builder-skill.mjs` and `git diff --check` passed. The Codex skill is byte-identical to 9c279e7 and its picker citation remains at line 63. Jev's shadow choice was Sol at 0.88, recorded in `jev-empty-effort-fix.json`. Sol at high effort remained the task owner. The tests made no live provider calls.

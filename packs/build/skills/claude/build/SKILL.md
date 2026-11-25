@@ -219,14 +219,14 @@ EFFORT_FLAG=()
 ```
 
 ```bash
-codex exec --skip-git-repo-check --sandbox workspace-write -m "$BUILDER_ID" "${EFFORT_FLAG[@]}" \
+codex exec --skip-git-repo-check --sandbox workspace-write -m "$BUILDER_ID" ${EFFORT_FLAG[@]+"${EFFORT_FLAG[@]}"} \
   --json -o "$PHASE_RESULT" "$(cat "$BRIEF_FILE")" </dev/null
 ```
 
 Record the `thread_id` from the `thread.started` JSONL event. For a callback or resume within that phase, `THREAD_ID` is that worker's saved identifier. The session inherits its sandbox. Use its explicit ID so a gate session in the same worktree cannot be selected by mistake.
 
 ```bash
-codex exec resume "$THREAD_ID" --skip-git-repo-check -m "$BUILDER_ID" "${EFFORT_FLAG[@]}" \
+codex exec resume "$THREAD_ID" --skip-git-repo-check -m "$BUILDER_ID" ${EFFORT_FLAG[@]+"${EFFORT_FLAG[@]}"} \
   -o "$PHASE_RESULT" "$(cat "$BRIEF_FILE")" </dev/null
 ```
 
