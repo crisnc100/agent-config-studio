@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "reviewId": "2026-11-25-14-08-33-5310a7",
+  "reviewer": "codex-gpt-6.1-sol-xhigh",
+  "family": "sol-prev",
+  "base": "origin/main",
+  "branch": "builder-selection",
+  "head": "1c7e46bd460e93c894331ba6d21544473a7b049a",
+  "paths": [
+    "lib/describe.js",
+    "lib/models-panel.js",
+    "lib/roles-panel.js",
+    "lib/roles.js",
+    "public/app.js",
+    "public/styles.css",
+    "tests/SUITE",
+    "tests/builder-settings-ui.mjs",
+    "tests/builder-settings.mjs"
+  ],
+  "reportPath": "reviews/2026-11-25-14-08-33-5310a7/code-review.md",
+  "diffTruncated": false,
+  "verify": null,
+  "secondOpinion": null,
+  "findings": [],
+  "disputed": [],
+  "unverified": [],
+  "security": {
+    "run": "required",
+    "status": "not-asked",
+    "reason": "code-only run"
+  }
+}

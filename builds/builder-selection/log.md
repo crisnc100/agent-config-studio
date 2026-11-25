@@ -35,3 +35,11 @@ The existing Roles write path rejects a stale installed resolver before editing 
 On Node 23.11.1, the 16 focused scripts passed 1,229 checks. Run `node tests/<name>.mjs` for each script: `builder-settings` (6), `builder-settings-ui` (2), `roles-pick` (15), `roles-routes` (157), `roles-unit` (100), `roles-ui` (75), `model-guide` (207), `model-guide-routes` (65), `model-guide-ui` (51), `models-families` (223), `models-layout-ui` (109), `roles-writer` (9), `readme` (56), `guards` (11), `setup-guards` (110), and `suite-coverage` (33). `node --check` passed for every changed JavaScript file. `git diff --check` passed. The registry has 204 entries, with the two new offline suites added in a test-registration commit. Existing assertions and frozen review.test.mjs did not change.
 
 Browser QA uses the orchestrator’s isolated Models server and seed. Open `/#models`, then Edit for builder. Verify a save and reload with Random per task, a preference from the lineup and a reserve, then Jev task fit with None and usage unchecked, then First available. Check the preseeded advisor, model profile, per-member effort and second opinion. A preinstalled guide should show Review and update. A stale resolver copy under the isolated home’s `.agent-config-studio/resolver/lib/roles.js` should make the page show `acs install-model-id` and refuse the policy save.
+
+## Phase 2 independent verification and UI interruption
+
+Installed code-review runtime: 2026-11-25-14-08-33-5310a7 at 1c7e46bd460e93c894331ba6d21544473a7b049a; Sol-prev xhigh, 0 findings, no truncation, all Phase 2 code/test paths. Not closed mid-build.
+
+Browser QA is NOT complete: initial CUA REPL could not initialize, native Chrome fallback was interrupted by Cris because it interfered with an interview. All computer control stopped and isolated QA server stopped. No feature UI interaction/persistence criterion is claimed passed by that attempt. Continue only background code/tests; interactive computer control requires Cris to resume it. A private headless automated check, if used, must have its own evidence and must not touch the active browser/profile.
+
+Phase 3 shadow: neon, confidence 0.37; telemetry only. Same task owner Sol, fresh high-effort worker.
