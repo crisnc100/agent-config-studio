@@ -138,3 +138,11 @@ The test-only commit 285cde4 checks the full argv for fresh and resumed dispatch
 One headless Claude route probe passed at source3578f24 in15.35seconds, effortmedium (Jev0.96). The exact skill dispatch block edited one fixture file, ran the unchanged fixed Node assertion and committed only that file;0permission denials, clean fixture, CLI modelUsage matched the role-resolved id. No GUI or other models were invoked by the worker. Public projection live-permission-probe.json;1CLI probe session, not1provider API turn. Neon invocations for this feature remain0. A prior strict-Bash preflight failed before Claude execution (0provider calls) and was fixed with four red-green argument combinations under Bash3 nounset.
 
 The new quality paragraph was also aligned with Cris's standing automatic escalation rule before the fix check. The public QA target is redacted at the tip; its unpublished ancestor will be sanitized after final model checks without changing the final tree or collapsing test-only commits, before the first push.
+
+## Required full-suite failure and bounded repair
+
+At tree2d1f730, Mini passed43files then models.mjs failed shipped-skill lint (63pass/1fail;6bare-substitution hits). Allactual/taskHOMEguards and clean-source checks passed. Laptop4passed23.42s. Original logs/receipts preserved in/tmp; no failed assertion or lint pattern was changed. This blocks CI. Blind second-opinionall offered Astra+Sol-prev (both exit0, read-only, agree on shell semantics and full selection tests). A bounded source repair plus changed-file review is required. The known strict initial-exclusion issue in those same blocks is included; original check deferrals/scores remain and will name the later repair evidence. No additional original fix check or second context pass.
+
+The early public-history sanitation was reversed privately with an identical tree to preserve model-review ancestry during the required repair. Final sanitation moves after successful closes and before first push. No protected branch/index or other worktree changed.
+
+Repair shadowneon 0.32; task owner remains Solhigh. ZeroNeoninvocations; alloffered meant configured advisor/reviewer families, not every catalog entry.
