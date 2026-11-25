@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "reviewId": "2026-11-25-13-54-03-f69a50",
+  "reviewer": "codex-gpt-6.1-sol-xhigh",
+  "family": "sol-prev",
+  "base": "origin/main",
+  "branch": "builder-selection",
+  "head": "0da63dbb42dbff9a3eb855fc043ff9e6f4ad463c",
+  "reportPath": "reviews/2026-11-25-13-54-03-f69a50/code-review.md",
+  "diffTruncated": false,
+  "verify": null,
+  "secondOpinion": null,
+  "findings": [],
+  "disputed": [],
+  "unverified": [],
+  "security": {
+    "run": "required",
+    "status": "not-asked",
+    "reason": "code-only run"
+  }
+}

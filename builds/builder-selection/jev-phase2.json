@@ -1,0 +1,20 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "lane_shadow": {
+      "type": "choice",
+      "choice": "neon",
+      "confidence": 0.24,
+      "probabilities": {
+        "sol": 0.31,
+        "opus": 0.25,
+        "neon": 0.43,
+        "unverified": 0.01
+      }
+    }
+  },
+  "usage": {
+    "input_tokens": 1147,
+    "output_tokens": 50
+  }
+}
