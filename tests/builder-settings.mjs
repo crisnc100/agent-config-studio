@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import fs from 'node:fs';
+import { request } from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -42,12 +43,28 @@ async function sandbox(t, seed = configured) {
   const stopped = once(child, 'exit');
   t.after(async () => { child.kill(); await stopped; });
   const base = `http://localhost:${port}`;
-  const call = async (route, body) => {
-    const res = await fetch(`${base}${route}`, body === undefined ? undefined : {
-      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  const call = (route, body) => new Promise((resolve, reject) => {
+    const payload = body === undefined ? undefined : JSON.stringify(body);
+    const options = body === undefined ? {} : {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(payload ?? '') },
+    };
+    const req = request(`${base}${route}`, options, (res) => {
+      const chunks = [];
+      res.on('data', (chunk) => chunks.push(chunk));
+      res.once('error', reject);
+      res.once('end', () => {
+        try {
+          const text = new TextDecoder().decode(Buffer.concat(chunks));
+          resolve({ status: res.statusCode, body: JSON.parse(text) });
+        } catch (error) {
+          reject(error);
+        }
+      });
     });
-    return { status: res.status, body: await res.json() };
-  };
+    req.once('error', reject);
+    req.end(payload);
+  });
   let ready = false;
   for (let i = 0; i < 100 && child.exitCode === null; i++) {
     try { if ((await call('/api/health')).status === 200) { ready = true; break; } } catch {}
