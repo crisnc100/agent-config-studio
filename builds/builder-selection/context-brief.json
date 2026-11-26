@@ -1,0 +1,69 @@
+{
+  "mode": "pr",
+  "purpose": "Let Cris configure first-available, uniform random per big task, or Jev task-fit builder selection while keeping one family through steps/fixes/resumes. Usage limits and new visual design preference are optional; model strengths and cautions remain available.",
+  "mechanism": "lib/roles.js validates optional roles.builder.pick {mode,design?,reservePercent?}, preserves legacy role output, filters paused/excluded members, conservatively reads cached usage, applies explicit design preference, and returns one family/id/effort packet. bin/model-id.mjs exposes --pick builder --json with --design, repeatable --exclude and bounded --task-file; only Jev mode when needed invokes one fixed bounded CLI subprocess with JSON stdin, validated confidence and deterministic fallback. lib/roles-panel.js exposes policy and refuses new fields against stale installed readers before writes. lib/describe.js preserves omitted existing policy in preview and acceptance. lib/models-panel.js retains design-family references for removal checks. public/app.js and styles add four controls and explain task ownership/design limits in the existing editor. guideText emits policy guidance only when configured. Both build SKILLs record packet/operator-named/exclusions in existing plan/handoff, reuse it through phases/fixes/resumes, dispatch native same-vendor workers or supported cross-vendor CLI including native agy, and pass the actual author to review. Explicit operator names preserve existing direct-family semantics. README and docs/neon-builder.md explain use and integration; agy wall/default read-only code is unchanged, served model remains unverified. The fixed cross-vendor Claude dispatcher receives only the phase brief's validation/staging/commit Bash rules through --allowedTools, stays in acceptEdits with empty strict MCP, and safely omits empty optional arrays under Mac Bash3 nounset. Saved records must have a configured builder family and the current matching registry id; automatic paused-owner dispatch is stopped, historical attribution and explicit named paused overrides stay distinct. A real headless Claude fixture edit/test/commit passed with the fixed assertion unchanged and no permission denials.",
+  "decisions": "Keep existing ordered defaults and deterministic --role output; optional policy only. No shared rotation cursor, scheduler or workflow database. Uniform random has no model-profile weight; new visual direction is explicitly marked by the orchestrator, other work uses ordinary selection. Missing/stale/ambiguous quota evidence leaves a candidate eligible with a reason; all authoritatively excluded returns unavailable. Absent reserve disables filtering, zero skips exhaustion. Jev only selects in its own mode and fails to first eligible. No live quota refresh or provider/model build calls are needed by selection tests. Source worktree is one goal/one PR; full-suite placement is Mini except four established laptop prerequisites. Interactive computer use stopped at Cris's interview; browser acceptance uses private headless Mini Chrome. The optional task-summary reader hardening is filed LOW6/100: a steered caller already has a shell. The caller-written bounded summary is passed to the external Jev CLI when Jev mode needs a decision; do not claim secret-identity or symlink refusal. Internal QA target details are redacted in the public projection; do not reintroduce them.",
+  "readers": "README and usage docs are for operators configuring builders. SKILL.md twins are executable instructions for orchestrators and are untouchable: report proposals only. Comments are for future maintainers and explain constraints/traps, not the code steps. Build reports are immutable evidence, not editorial docs.",
+  "base": "origin/main",
+  "docMap": [
+    {
+      "behavior": "Builder policy schema, CLI selection, cached usage, design preference and Jev fallback",
+      "docs": [
+        "README.md"
+      ]
+    },
+    {
+      "behavior": "Settings save/reload, stale resolver compatibility, Describe preservation and family references",
+      "docs": [
+        "README.md"
+      ]
+    },
+    {
+      "behavior": "Task ownership, resume/fix/replacement, effort and actual author through both harnesses",
+      "docs": [
+        "packs/build/skills/claude/build/SKILL.md",
+        "packs/build/skills/codex/build/SKILL.md",
+        "README.md"
+      ]
+    },
+    {
+      "behavior": "Neon native dispatch, unchanged default read-only path and unverified served model",
+      "docs": [
+        "docs/neon-builder.md",
+        "README.md"
+      ]
+    }
+  ],
+  "untouchable": [
+    "builds/builder-selection/advisor-brief.md",
+    "builds/builder-selection/advisor-prompt.md",
+    "builds/builder-selection/advisor-report.md",
+    "builds/builder-selection/context.md",
+    "builds/builder-selection/explorer-brief.md",
+    "builds/builder-selection/explorer-report.md",
+    "builds/builder-selection/jev-exploration.json",
+    "builds/builder-selection/jev-phase1.json",
+    "builds/builder-selection/jev-phase2.json",
+    "builds/builder-selection/jev-phase3.json",
+    "builds/builder-selection/jev-qa-postflight.json",
+    "builds/builder-selection/jev-qa-preflight.json",
+    "builds/builder-selection/jev-review-fix.json",
+    "builds/builder-selection/jev-ui-copy.json",
+    "builds/builder-selection/live-permission-probe.json",
+    "builds/builder-selection/log.md",
+    "builds/builder-selection/phase1-brief.md",
+    "builds/builder-selection/phase1-review.json",
+    "builds/builder-selection/phase1-status.json",
+    "builds/builder-selection/phase2-brief.md",
+    "builds/builder-selection/phase2-review.json",
+    "builds/builder-selection/phase2-status.json",
+    "builds/builder-selection/phase3-brief.md",
+    "builds/builder-selection/plan.md",
+    "builds/builder-selection/pr-review-refs.json",
+    "builds/builder-selection/qa-final.json",
+    "builds/builder-selection/review-fix-brief.md",
+    "builds/builder-selection/context-brief.json",
+    "builds/builder-selection/context-prompt.md",
+    "packs/KNOWN-LIMITS.md"
+  ]
+}

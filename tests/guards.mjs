@@ -296,6 +296,13 @@ const AGY_USAGE_CALLS = [
 const AGY_USAGE_OPTS = "const opts = { cwd: dir, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, CMUX_ANTIGRAVITY_HOOKS_DISABLED: '1', AGY_CLI_DISABLE_AUTO_UPDATE: 'true' } };";
 const AGY_USAGE_DIRS = ['null', "fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-usage-'))"];
 
+/** The task picker's only subprocess is the fixed Jev stdin protocol. */
+const JEV_CALL = "jev, ['--json-out', '--timeout', '4'], { input: JSON.stringify(request), stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf8', timeout: 5_000, maxBuffer: 64 * 1024, killSignal: 'SIGKILL', }";
+const JEV_LOOKUP = "function findJev() { for (const dir of (process.env.PATH || '').split(path.delimiter)) { " +
+  "if (!path.isAbsolute(dir)) continue; const candidate = path.join(dir, 'jev'); try { " +
+  "if (!fs.statSync(candidate).isFile()) continue; fs.accessSync(candidate, fs.constants.X_OK); return candidate; " +
+  "} catch {} } return null; }";
+
 /** lib/agent.js's watcher inspectors: the only callees there besides 'cmux', each with its exact argv. */
 const AGENT_INSPECTOR_FN = "const inspector = (bin, name) => process.env.AGENT_TEST_MODE === '1' && process.env[name] || bin;";
 const AGENT_INSPECTOR_CALLS = ["inspector('/bin/ps', 'AGENT_TEST_PS')", "inspector('/usr/sbin/lsof', 'AGENT_TEST_LSOF')"];
@@ -345,6 +352,23 @@ function guardB() {
         } else {
           hits.push(`${file}:${call.line} ${call.fn}() — harness.js may spawn only via spawnContained / readVersion`);
         }
+      }
+      continue;
+    }
+
+    if (file === 'bin/model-id.mjs') {
+      const call = calls[0];
+      const chooser = functionSpan(src, 'chooseWithJev');
+      const lookup = functionSpan(src, 'findJev');
+      const signature = call && (callArgsText(src, call) || '').replace(/\s+/g, ' ').trim();
+      const finder = lookup && src.slice(lookup.start, lookup.end).replace(/\s+/g, ' ');
+      const body = chooser && src.slice(chooser.start, chooser.end);
+      const bindings = [...(body || '').matchAll(/\bjev\b/g)];
+      if (calls.length !== 1 || call.fn !== 'spawnSync' || !inSpan(call.index, chooser)
+          || signature !== JEV_CALL || finder !== JEV_LOOKUP
+          || [...src.matchAll(/\bfindJev\b/g)].length !== 2
+          || !body?.includes('const jev = findJev();') || bindings.length !== 3) {
+        hits.push(`${file} may spawn only the detected absolute jev binary in chooseWithJev(), with the fixed stdin protocol and bounds`);
       }
       continue;
     }

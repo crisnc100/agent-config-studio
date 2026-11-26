@@ -49,7 +49,12 @@ ok('B10 Get started has command blocks for tests/stranger.mjs to run', getStarte
 const help = spawnSync('/bin/sh', [path.join(ROOT, 'bin', 'acs'), 'help'], { encoding: 'utf8', env: { ...process.env, ACS_NO_UPDATE: '1' } });
 ok('acs help exits 0', help.status === 0, help.stderr);
 const subs = new Set([...help.stdout.matchAll(/^\s+(?:usage: )?acs ([a-z-]+)/gm)].map((m) => m[1]));
-const modelUsage = src('bin/model-id').match(/usage: model-id ([^']+)'/)?.[1] || '';
+const modelFlags = new Set([...src('bin/model-id').matchAll(/usage: model-id ([^'\n]+)'/g)]
+  .flatMap((match) => match[1].match(/--[a-z-]+/g) ?? []));
+const unknownModelFlag = (words) => words.slice(1).some((word) => {
+  const flag = word.replace(/^\[|\]$/g, '');
+  return flag.startsWith('--') && !modelFlags.has(flag);
+});
 const wtFns = new Set([...src('tools/worktree/wt.zsh').matchAll(/^([a-z]+)\s*\(\)\s*\{/gm)].map((m) => m[1]));
 const agentHelp = spawnSync(process.execPath, [path.join(ROOT, 'bin/agent.mjs'), '--help'], { encoding: 'utf8' });
 ok('acs-agent help exits 0', agentHelp.status === 0, agentHelp.stderr);
@@ -67,7 +72,7 @@ for (const { lines } of outside) {
     } else if (words[0] === 'acs-agent') {
       if (agentProblem(words)) unknown.push(line);
     } else if (words[0] === 'model-id') {
-      if (words[1]?.startsWith('--') && !modelUsage.includes(words[1])) unknown.push(line);
+      if (unknownModelFlag(words)) unknown.push(line);
     } else if (!wtFns.has(words[0])) {
       unknown.push(line);
     }
@@ -124,7 +129,7 @@ function spanProblem(sp) {
   } else if (words[0] === 'acs-agent') {
     if (agentProblem(words)) unchecked.push(sp);
   } else if (words[0] === 'model-id') {
-    if (words[1]?.startsWith('--') && !modelUsage.includes(words[1])) unchecked.push(sp);
+    if (unknownModelFlag(words)) unchecked.push(sp);
   } else if (wtFns.has(words[0])) {
     for (const f of words.filter((w) => /^\[?--/.test(w))) {
       if (!src('tools/worktree/wt.zsh').includes(f.replace(/^\[|\]$/g, ''))) unchecked.push(`${sp} (flag not in wt.zsh)`);
@@ -135,6 +140,9 @@ function spanProblem(sp) {
   return unchecked.length ? unchecked.join(' | ') : null;
 }
 ok('the worker command audit rejects unknown verbs and flags', spanProblem('acs-agent surely-invalid') !== null && spanProblem('acs-agent list --surely-invalid') !== null);
+ok('the model-id command audit recognizes picker usage and rejects an unknown trailing flag',
+   spanProblem('model-id --pick builder --json --design') === null &&
+   spanProblem('model-id --pick builder --json --surely-invalid') !== null);
 ok('the worker command audit accepts documented verbs and flags', spanProblem('acs-agent list --json') === null);
 const unchecked = [];
 for (const sp of commands) {

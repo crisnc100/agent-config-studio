@@ -10,6 +10,7 @@
  *   model-id --sidecars      ids in CLI-owned files that are not current registry values
  *   model-id --install       copy this resolver (and ask-model) out of the checkout and link them in ~/.local/bin
  *   model-id --role <name>   family=… id=… effort=… alt=…  (add --json for the whole role)
+ *   model-id --pick builder --json [--design] [--exclude <family>]… [--task-file <path>]
  *   model-id --flavor <fam>  how to brief that family, as plain text
  *   model-id --roles         every role → family, id, effort, alt (--table is families only)
  *   model-id --effort <fam> [--role <role>[,<role>…]] [--no-alt]
@@ -30,6 +31,7 @@
  * so a family lookup never depends on roles. Never lib/harness.js: that
  * module sweeps temp files at import, and this runs from every skill.
  */
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -41,6 +43,7 @@ import {
 const args = process.argv.slice(2);
 /** The whole interface, said when a role flag is misused (the bare usage line below stays as it was). */
 const FULL_USAGE = 'usage: model-id <family|raw-id> | --table | --json | --lint [paths] | --sidecars | --install | --role <name> [--json] | --flavor <family> [--json] | --roles [--json] | --effort <family> [--role <role>[,<role>…]] [--no-alt] [--json]';
+const PICK_USAGE = 'usage: model-id --pick builder --json [--design] [--exclude <family>]… [--task-file <path>]';
 const tilde = (p) => (p.startsWith(homeDir() + path.sep) ? '~' + p.slice(homeDir().length) : p);
 
 function unresolved(name, why) {
@@ -201,6 +204,87 @@ function pauseNotes(R, results) {
   }
 }
 
+function findJev() {
+  for (const dir of (process.env.PATH || '').split(path.delimiter)) {
+    if (!path.isAbsolute(dir)) continue;
+    const candidate = path.join(dir, 'jev');
+    try {
+      if (!fs.statSync(candidate).isFile()) continue;
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return candidate;
+    } catch {}
+  }
+  return null;
+}
+
+function readTaskSummary(file) {
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | fs.constants.O_NONBLOCK);
+  try {
+    if (!fs.fstatSync(fd).isFile()) return '';
+    const buffer = Buffer.alloc(4096);
+    const n = fs.readSync(fd, buffer);
+    return buffer.toString('utf8', 0, n).trim();
+  } finally { fs.closeSync(fd); }
+}
+
+function chooseWithJev(file, profiles, escape) {
+  if (!file) return { error: 'Jev needs a task summary from --task-file' };
+  let summary;
+  try { summary = readTaskSummary(file); } catch { return { error: 'Jev could not read the task summary' }; }
+  if (!summary) return { error: 'Jev needs a nonempty task summary from a regular file' };
+  const jev = findJev();
+  if (!jev) return { error: 'Jev CLI was not found on PATH' };
+  const criteria = Object.fromEntries(profiles.map(({ family, ...profile }) => [family, JSON.stringify(profile)]));
+  criteria[escape] = 'The task or profiles do not establish a clear fit.';
+  const request = {
+    state: { task: summary },
+    questions: { builder: {
+      type: 'choice',
+      instructions: 'Choose the builder whose saved strengths fit this task, taking its cautions and roles to avoid into account.',
+      criteria,
+    } },
+  };
+  const result = spawnSync(jev, ['--json-out', '--timeout', '4'], {
+    input: JSON.stringify(request), stdio: ['pipe', 'pipe', 'pipe'], encoding: 'utf8',
+    timeout: 5_000, maxBuffer: 64 * 1024, killSignal: 'SIGKILL',
+  });
+  if (result.error?.code === 'ETIMEDOUT') return { error: 'Jev timed out' };
+  if (result.error?.code === 'ENOBUFS') return { error: 'Jev output exceeded the limit' };
+  if (result.error || result.status !== 0) return { error: 'Jev CLI failed' };
+  try { return { answer: JSON.parse(result.stdout)?.answers?.builder }; }
+  catch { return { error: 'Jev returned invalid JSON' }; }
+}
+
+function pickCli(argv, R) {
+  const die = (why) => {
+    process.stderr.write(`model-id: ${why}\n`);
+    process.exit(2);
+  };
+  const jsonFirst = argv[0] === '--json';
+  const roleAt = jsonFirst ? 2 : 1;
+  if (argv[roleAt] !== 'builder') die(`--pick only accepts builder — ${PICK_USAGE}`);
+  const exclude = [];
+  let json = jsonFirst, design = false, taskFile;
+  for (let i = roleAt + 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--json' && !json) json = true;
+    else if (arg === '--design' && !design) design = true;
+    else if (arg === '--exclude' || (arg === '--task-file' && taskFile === undefined)) {
+      const value = argv[++i];
+      if (!value || value.startsWith('-')) die(`${arg} needs a value`);
+      if (arg === '--exclude') exclude.push(value);
+      else taskFile = value;
+    } else die(`unexpected argument ${JSON.stringify(arg)} — ${PICK_USAGE}`);
+  }
+  if (!json) die('--pick builder requires --json');
+  if (R.missing) die(R.missing);
+  if (typeof R.pickBuilder !== 'function') die('this resolver has no builder picker — run: acs install-model-id');
+  const result = R.pickBuilder({ design, exclude, choose: (profiles) => chooseWithJev(taskFile, profiles, R.BUILDER_PICK_ESCAPE) });
+  process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+  if (result.pauseError) process.stderr.write(`model-id: ${result.pauseError} — nothing is paused until it is fixed\n`);
+  if (result.error) die(result.error);
+}
+
 /** --role / --flavor / --roles, with --json anywhere among them. */
 function rolesCli(argv, R) {
   const die = (why, stdout = '') => {
@@ -265,7 +349,9 @@ function rolesCli(argv, R) {
 const [first, ...rest] = args;
 const ROLE_FLAGS = new Set(['--role', '--flavor', '--roles', '--effort']);
 
-if (ROLE_FLAGS.has(first) || (first === '--json' && rest.some((a) => ROLE_FLAGS.has(a)))) {
+if (first === '--pick' || (first === '--json' && rest[0] === '--pick')) {
+  pickCli(args, await rolesLib());
+} else if (ROLE_FLAGS.has(first) || (first === '--json' && rest.some((a) => ROLE_FLAGS.has(a)))) {
   rolesCli(args, await rolesLib());
 } else if (first === '--install') {
   await install();

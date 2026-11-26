@@ -6,6 +6,10 @@
 ask-model --family neon --prompt-file brief.md --cwd <worktree-root> --build --json
 ```
 
+When a build skill picks Neon, it saves the family and effort in the task
+plan or handoff. It uses that family with `--family` and passes the saved
+effort on every build call. Both phases and fixes use the same choice.
+
 ## Requirements
 
 - `--cwd` is required and must be the canonical Git worktree root. The filesystem root, your home folder and any folder holding it are refused, and so is a path that is not its own `git rev-parse --show-toplevel`. This is checked before agy is run, even to read its version.
@@ -34,6 +38,6 @@ A signal sent to `ask-model` (INT, TERM or HUP) is remembered and kills agy's pr
 
 ## Limits
 
-This route is a capability, not a measured coding-quality result, and no Neon quality score is claimed. `ask-model` runs the one family you name, or the family the `builder` role resolves to; it does not rotate builders.
+This route runs the family you give to `ask-model --family`. A direct `ask-model --role builder` call uses the first unpaused family in role order. The build skills use `model-id --pick builder --json` to apply the configured task selection strategy.
 
 The benchmark adapter's native Neon builds are described in `builds/neon-builder/benchmark-adapter/README.md`.

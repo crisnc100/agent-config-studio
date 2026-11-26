@@ -1,0 +1,26 @@
+{
+  "model": "jev-1.13.0",
+  "answers": {
+    "criteria_browser_checkable": {
+      "type": "noul",
+      "noul": 0.78
+    },
+    "url_and_setup_present": {
+      "type": "noul",
+      "noul": 0.59
+    },
+    "lane_shadow": {
+      "type": "choice",
+      "choice": "sol-prev",
+      "confidence": 0.78,
+      "probabilities": {
+        "sol-prev": 0.89,
+        "unverified": 0.11
+      }
+    }
+  },
+  "usage": {
+    "input_tokens": 913,
+    "output_tokens": 75
+  }
+}

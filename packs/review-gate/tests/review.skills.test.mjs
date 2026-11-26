@@ -161,11 +161,12 @@ test('build (claude): its gates send their own prompt files through ask-model, s
   }
 })
 
-test('build (claude): both builder calls take the builder\'s effort from its role, else its flavor, and never pass it empty', () => {
+test('build (claude): both cross-vendor calls use the named owner’s effort from its role or flavor and omit an empty effort', () => {
   const claudeSkill = skill('build/skills/claude/build/SKILL.md')
-  const setup = block(claudeSkill, /^BUILDER=<family>/m)
-  const effort = block(claudeSkill, /EFFORT_FLAG=\(\)/)
-  const phase1 = block(claudeSkill, /--sandbox workspace-write/)
+  const select = block(claudeSkill, /^if \[ -z "\$\{BUILDER_RECORD:-\}" \]/m)
+  const restore = block(claudeSkill, /^BUILDER=\$\(jq -er/m)
+  const effort = block(claudeSkill, /^EFFORT_FLAG=\(\)/m)
+  const phase1 = block(claudeSkill, /^codex exec .*--sandbox workspace-write/m)
   const resume = block(claudeSkill, /^codex exec resume/m)
   const memberEffort = { roles: { builder: { use: [{ family: 'opus', effort: 'xhigh' }, 'sol'] } } }
   const cases = [
@@ -176,15 +177,22 @@ test('build (claude): both builder calls take the builder\'s effort from its rol
     ['a role effort beats the flavor effort', { flavor: { sol: { effort: 'low' } } }, 'sol', '', 'medium'],
     ['no role effort: a later member takes its flavor effort', { roles: { builder: { effort: null } }, flavor: { sol: { effort: 'high' } } }, 'sol', '', 'high'],
     ['no role effort and no flavor effort: the flag is left out', { roles: { builder: { effort: null } } }, 'sol', '', null],
-    ['a family outside the role takes its flavor effort', { flavor: { terra: { effort: 'low' } } }, 'terra', '', 'low'],
-    ['a family outside the role with no flavor effort: the flag is left out', null, 'terra', '', null],
     ['an effort the user named wins', null, 'sol', 'max', 'max'],
   ]
   for (const shell of SHELLS) {
     for (const [label, doc, family, named, expected] of cases) {
       roles(doc)
-      const script = [fill(setup, { '<family>': family, '<effort>': named }), effort, fill(phase1), fill(resume)].join('\n')
-      const { codex } = run(shell, `${script}\n`)
+      const script = `NAMED_BUILDER=${family}\nNAMED_EFFORT=${named}\nEXCLUDED=()\n${select}\n${restore}\n`
+      const selected = spawnSync(shell, ['-ec', `${script}printf '%s\\n' "$BUILDER_RECORD"`], { env: { HOME, PATH }, encoding: 'utf8' })
+      assert.equal(selected.status, 0, `${shell} ${label}: ${selected.stderr}`)
+      const owner = JSON.parse(selected.stdout)
+      assert.equal(owner.family, family, `${shell} ${label}`)
+      assert.equal(owner.id, models[family], `${shell} ${label}`)
+      assert.equal(owner.effort, expected ?? '', `${shell} ${label}`)
+      if (cliOf(owner.id) !== 'codex') continue  // The native Claude route does not start a Codex worker.
+      const worker = `BRIEF_FILE=brief.md\nPHASE_RESULT=result.md\nTHREAD_ID=thread-1\n`
+      put(join(WORK, 'brief.md'), 'Test brief')
+      const { codex } = run(shell, [script, worker, effort, phase1, resume].join('\n'))
       assert.equal(codex.length, 2, `${shell} ${label}: phase 1 and the resume`)
       for (const argv of codex) {
         assert.equal(effortIn('codex', argv), expected, `${shell} ${label}: ${argv.join(' ')}`)
@@ -355,16 +363,22 @@ for (const harness of ['claude', 'codex']) {
   })
 }
 
-test('build (claude): the builder effort counts only the builder role\'s members, never its alt, as before', () => {
+test('the build skill’s direct effort lookup ignores the builder alt and retains flavor fallback outside the lineup', () => {
   const claudeSkill = skill('build/skills/claude/build/SKILL.md')
-  const setup = block(claudeSkill, /^BUILDER=<family>/m)
-  const effort = block(claudeSkill, /EFFORT_FLAG=\(\)/)
-  const phase1 = block(claudeSkill, /--sandbox workspace-write/)
+  const select = block(claudeSkill, /^if \[ -z "\$\{BUILDER_RECORD:-\}" \]/m)
+  const lookup = select.split('\n').find((line) => line.includes('model-id --effort'))
+  assert.match(lookup, /--role builder --no-alt/)
   for (const shell of SHELLS) {
-    roles({ roles: { builder: { alt: 'terra' } }, flavor: { terra: { effort: 'low' } } })
-    const { codex } = run(shell, `${[fill(setup, { '<family>': 'terra', '<effort>': '' }), effort, fill(phase1)].join('\n')}\n`)
-    assert.equal(codex.length, 1, `${shell}: phase 1`)
-    assert.equal(effortIn('codex', codex[0]), 'low', `${shell}: terra as the builder role's alt takes its flavor effort: ${codex[0].join(' ')}`)
+    for (const [doc, expected] of [
+      [{ flavor: { terra: { effort: 'low' } } }, 'low'],
+      [null, ''],
+      [{ roles: { builder: { alt: { family: 'terra', effort: 'xhigh' } } }, flavor: { terra: { effort: 'low' } } }, 'low'],
+    ]) {
+      roles(doc)
+      const result = spawnSync(shell, ['-ec', `BUILDER=terra\nEFFORT=\n${lookup}\nprintf '%s\\n' "$EFFORT"`], { env: { HOME, PATH }, encoding: 'utf8' })
+      assert.equal(result.status, 0, result.stderr)
+      assert.equal(result.stdout.trim(), expected, `${shell}: a family outside use takes its flavor effort`)
+    }
   }
 })
 

@@ -1,0 +1,151 @@
+{
+  "rows": [
+    {
+      "behavior": "Builder pick policy schema (mode, design, reservePercent), builder-only, with ordered/random/Jev selection, cached-usage filtering, exclusions and design preference",
+      "files": [
+        "lib/roles.js"
+      ],
+      "docs": [
+        {
+          "path": "README.md",
+          "claims": [
+            {
+              "claim": "The pick policy has modes ordered, random and jev, and only the builder role can set it",
+              "at": "lib/roles.js:54"
+            },
+            {
+              "claim": "Only the builder role can set a pick policy",
+              "at": "lib/roles.js:153"
+            },
+            {
+              "claim": "Random gives each eligible lineup member the same chance",
+              "at": "lib/roles.js:643"
+            },
+            {
+              "claim": "Jev falls back to the first eligible member without a confident (>= 0.7) valid choice",
+              "at": "lib/roles.js:606"
+            },
+            {
+              "claim": "A design preference selects the configured family when eligible and design is requested",
+              "at": "lib/roles.js:639"
+            },
+            {
+              "claim": "Cached usage skips a family that is exhausted or below the reserve; unknown evidence leaves it eligible",
+              "at": "lib/roles.js:587"
+            },
+            {
+              "claim": "When no family is eligible the picker returns an error",
+              "at": "lib/roles.js:638"
+            },
+            {
+              "claim": "An exclusion must name a known family",
+              "at": "lib/roles.js:660"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "behavior": "model-id --pick builder --json with --design, repeatable --exclude and --task-file; Jev run as one bounded subprocess",
+      "files": [
+        "bin/model-id.mjs"
+      ],
+      "docs": [
+        {
+          "path": "README.md",
+          "claims": [
+            {
+              "claim": "The picker accepts --design, --task-file <path> and repeated --exclude <family>, and exits with the reasons when none is eligible",
+              "at": "bin/model-id.mjs:271"
+            },
+            {
+              "claim": "The picker exits non-zero with the error when no family is eligible",
+              "at": "bin/model-id.mjs:285"
+            }
+          ]
+        },
+        {
+          "path": "docs/neon-builder.md",
+          "claims": [
+            {
+              "claim": "Build skills use model-id --pick builder --json for task selection",
+              "at": "packs/build/skills/codex/build/SKILL.md:63"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "behavior": "Builder policy guidance in the generated model guide, emitted only when configured",
+      "files": [
+        "lib/roles.js"
+      ],
+      "docs": [
+        {
+          "path": "README.md",
+          "claims": [
+            {
+              "claim": "The guide's pick command adds --task-file only for Jev mode and mentions --design and the usage reserve only when configured",
+              "at": "lib/roles.js:779"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "behavior": "Settings save refuses pick settings against a stale installed resolver; Describe preserves an omitted pick policy",
+      "files": [
+        "lib/roles-panel.js",
+        "lib/describe.js"
+      ],
+      "docs": [
+        {
+          "path": "README.md",
+          "claims": [
+            {
+              "claim": "Saving builder selection settings is refused while the installed model-id is older",
+              "at": "lib/roles-panel.js:82"
+            },
+            {
+              "claim": "Describe keeps the saved pick settings when the proposal omits them",
+              "at": "lib/describe.js:164"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "behavior": "Design-family references are retained for model removal checks",
+      "files": [
+        "lib/models-panel.js"
+      ],
+      "none": "Internal reference check; the removal warning text it feeds is self-explanatory in the panel and no reader-facing doc needs it (lib/models-panel.js:444)."
+    },
+    {
+      "behavior": "Roles editor: four builder controls and task-ownership/design-limit copy",
+      "files": [
+        "public/app.js",
+        "public/styles.css"
+      ],
+      "docs": [
+        {
+          "path": "README.md",
+          "claims": [
+            {
+              "claim": "Models > Roles > builder > Edit offers First available, Random per task and Jev task fit",
+              "at": "public/app.js:5158"
+            },
+            {
+              "claim": "The editor explains one builder per big task and that the design preference applies only to new visual direction",
+              "at": "public/app.js:5433"
+            },
+            {
+              "claim": "The usage check has an optional reserve percentage",
+              "at": "public/app.js:5283"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
