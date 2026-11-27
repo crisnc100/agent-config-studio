@@ -186,3 +186,9 @@ Every model-facing test ran on temp HOME and stubs. Frozen `packs/review-gate/te
 - The three live probe streams are not in this worktree, so their offline replay through the new guard was not rerun here. The root holds them.
 - unverified: whether agy 1.5.14 ever emits more than one result event, or splits a step's state and error message across updates. Both shapes are synthetic.
 - Subagent refusals inside unread transcripts stay unknown (s2, filed).
+
+## Context pass verification
+
+Sonnet's context commit `c4de6d8` passed the installed context-pass commit checker. Its recorded tool calls wrote only `docs/neon-builder.md` and `builds/neon-build-refusals/docs-table.json`; no code line changed.
+
+A supplemental before/after real-HOME check failed (1 pass, 1 fail). It observed two other projects' instruction files, a model-catalog cache body, and a new session directory for another project changing during the window. The writer's tool transcript contains no writes outside its two approved files. Concurrent activity is confirmed by the new other-project session; attribution of each global/cache mutation remains incomplete. The failed check and snapshot are preserved privately. No outside file was reverted and this check is not reported as a pass. The final registered-suite run still owes its own real-HOME and isolated-HOME checks.
