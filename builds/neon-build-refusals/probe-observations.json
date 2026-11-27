@@ -124,5 +124,7 @@
         "command(node boundary-probe.cjs)"
       ]
     }
-  }
+  },
+  "requestedModel": "gemini-4-neon",
+  "effort": "high"
 }
