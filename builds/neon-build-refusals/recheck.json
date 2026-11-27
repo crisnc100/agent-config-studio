@@ -1,0 +1,24 @@
+{
+  "family": "sol",
+  "model": "gpt-6.2-sol",
+  "criteria": [
+    {
+      "id": "A2",
+      "criterion": "Any observed denied action makes native completed true impossible, exit4 with bounded diagnostics; no earlier denial disappears after a terminal success. Synthetic fixtures check normal clean success, DENIED, deny rule, approval-required, permission error, denied_actions and nested evidence.",
+      "verdict": "FAIL",
+      "evidence": "All 13 parser tests passed in memory against the current source. They cover denials in earlier and final result events, split indexed-step and inline subagent updates, 64-entry caps for notes and denials, exit 4 for recognized denials with a model mismatch, and exit 2 for a mismatch alone. A separate clean replay confirmed that refusal phrases in command output, parameters and answer text do not trigger a denial. A new replay split an inline subagent\u2019s ERROR status and EPERM message across its two IDs, then supplied both IDs together. The parser returned an answer with no exit override and an empty denial list, which can reach completed: true at tools/ask-model.mjs:2156\u20132164. The same replay with a model mismatch returned exit 2. The CLI fixtures were inspected and the isolated suite remains pending. The previously filed approval-filename false positive remains open."
+    }
+  ],
+  "findings": [
+    {
+      "likelihood": 2,
+      "impact": 8,
+      "protected": false,
+      "trigger": "An inline subagent update reports ERROR under its conversation_id, another reports EPERM under its log_uri, and a later update links both IDs before a SUCCESS result.",
+      "issue": "The parser keeps the two existing evidence records separate, allowing a denied native build to report completion.",
+      "file": "tools/ask-model.mjs",
+      "line": "1692",
+      "evidence": "Lines 1691\u20131695 select the first known record and assign only IDs that are still unknown. In memory, linking the IDs after both records existed produced an answer and denied: []. Linking them before the EPERM fragment arrived produced exit 4 and subagent (worker): permission denied."
+    }
+  ]
+}

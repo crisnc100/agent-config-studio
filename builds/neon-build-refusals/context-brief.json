@@ -1,0 +1,44 @@
+{
+  "mode": "pr",
+  "purpose": "Named Neon builds must fail loudly on any known refused action and may receive explicit per-task command rules, without auto mode or false isolation claims. Record three live permission sessions, no benchmark. Saved automatic-pick exclusions are a separate PR approved by Cris, and live configuration is unchanged.",
+  "mechanism": "tools/ask-model.mjs accepts repeatable build-only agy-only --allow-command strings: at most16 unique 1..512-character trimmed ASCII lines with a closed character set; compiles only permissions.allow command(string) rules into per-call --settings in accept-edits mode, lists the caller-supplied strings in the builder prompt, and adds no receipt field or default grant. No flag preserves existing launch behavior. Native refusal evidence is sticky across every result event and merged partial step/subagent updates independently of the bounded actions trace. Any known native denial exits4, omits build and answer, with bounded sanitized denied and notes; denial plus model mismatch also4 with both diagnostics, mismatch alone and readonly mismatch2. Notes capped64 for native builds only. No private subagent transcripts are newly read. Readonly wall, token refusal, auth postflight, pinned agyversion and served-model-unverified behavior remain. Both build SKILL twins accept an optional ALLOWED_COMMANDS array and construct repeated flags with strictBash3-safe optional expansion. docs/neon-builder.md explains the CLI, failures and measured limits; README links to native builder docs. Probe-observations.json records three CLI sessions, matching scoped normal and native-sandbox linked fixtures ran fixedtests and committed onlyvalue.cjs; both terminal temporary-sibling read/write reachable, normal example.comHTTP200 vs sandboxENOTFOUND, native canary read denied and later nativeURL/write unattempted. Do not imply universal network containment, verified served model, a wrapper live test with new flag, a quality score, or installed live config.",
+  "decisions": "Keep normal permissions by default; native --sandbox did not demonstrate a worktree-only boundary and no new sandbox flag is added. One rule per explicitly selected task command, not an exact-match enforcement or safety guarantee; backend matching semantics unverified. No wildcards, default prefixes, settings passthrough, project-derived grants, receipt field, scheduler or qualification DB. Known optional false-positive filenames and unknown subagent denials remain filed. Three liveNeon sessions exhausted budget; no more live calls. Scope A4 saved exclusions deferred by explicit user choice to separate subsequent PR; current qualification0/5 in privatehandoff.",
+  "readers": "README and docs/neon-builder.md are for CLI operators and orchestrators. Comments explain future-maintainer constraints, not the code steps. Build SKILL twins are untouchable agent instructions: propose corrections only. Build reports are immutable evidence.",
+  "base": "origin/main",
+  "docMap": [
+    {
+      "behavior": "Per-task native command grants and compatibility limits",
+      "docs": [
+        "README.md",
+        "docs/neon-builder.md",
+        "packs/build/skills/claude/build/SKILL.md",
+        "packs/build/skills/codex/build/SKILL.md"
+      ]
+    },
+    {
+      "behavior": "Sticky native denial failure, incremental evidence, bounded diagnostics and model mismatch precedence",
+      "docs": [
+        "docs/neon-builder.md"
+      ]
+    },
+    {
+      "behavior": "Native versus sandbox permission observations and unverified model proof",
+      "docs": [
+        "docs/neon-builder.md"
+      ]
+    }
+  ],
+  "untouchable": [
+    "builds/neon-build-refusals/advisor-report.md",
+    "builds/neon-build-refusals/context.md",
+    "builds/neon-build-refusals/grade-prompt.md",
+    "builds/neon-build-refusals/grade.json",
+    "builds/neon-build-refusals/launch-policy-advisor-report.md",
+    "builds/neon-build-refusals/log.md",
+    "builds/neon-build-refusals/plan.md",
+    "builds/neon-build-refusals/probe-observations.json",
+    "builds/neon-build-refusals/context-brief.json",
+    "builds/neon-build-refusals/context-prompt.md",
+    "packs/KNOWN-LIMITS.md"
+  ]
+}

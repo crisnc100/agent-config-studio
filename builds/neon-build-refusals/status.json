@@ -1,0 +1,38 @@
+{
+  "f1": {
+    "status": "fixed",
+    "response": "real",
+    "test": "tests/ask-model-build-evidence.mjs"
+  },
+  "f2": {
+    "status": "fixed",
+    "response": "real",
+    "test": "tests/ask-model-build-evidence.mjs",
+    "reason": "The original single-identity split-update reproductions now fail closed. The fix check identified a further two-existing-alias case (x1), which remains deferred; this is a partial repair of the overall incremental-update class, not a claim A2 is met."
+  },
+  "f3": {
+    "status": "fixed",
+    "response": "real",
+    "test": "tests/ask-model-build-evidence.mjs"
+  },
+  "f4": {
+    "status": "fixed",
+    "response": "real",
+    "test": "tests/ask-model-build-evidence.mjs"
+  },
+  "s1": {
+    "status": "fixed",
+    "response": "real",
+    "test": "tests/ask-model-build-evidence.mjs"
+  },
+  "s3": {
+    "status": "fixed",
+    "response": "real",
+    "test": "tests/ask-model-build-evidence.mjs"
+  },
+  "x1": {
+    "status": "deferred",
+    "reason": "The one fix check found a further alias-unification case after the one fix round. The original single-identity cases pass, but two previously separate IDs can still lose combined refusal evidence. A2 remains not met; no second fix/check round is allowed by the agreed review sequence.",
+    "fix": "Unify existing subagent evidence records and reclassify when an update links their IDs; preserve all aliases and add a fixture."
+  }
+}

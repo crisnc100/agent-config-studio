@@ -230,12 +230,24 @@ codex exec resume "$THREAD_ID" --skip-git-repo-check -m "$BUILDER_ID" ${EFFORT_F
   -o "$PHASE_RESULT" "$(cat "$BRIEF_FILE")" </dev/null
 ```
 
-**Antigravity builder.** For a `gemini-…` model, run the recorded family and effort through the native builder wrapper:
+**Antigravity builder.** For a `gemini-…` model, run the recorded family and effort through the native builder wrapper. Normal agy permissions can refuse a test or git command, and any refusal fails the build. Before each launch, set `ALLOWED_COMMANDS` to the commands that phase's brief tells the builder to run, written exactly as the brief has them: its checks, the staging command and the one commit line. Each string becomes an `--allow-command`, a session rule for that string. `ALLOWED_COMMANDS=()` grants none.
+
+```bash
+ALLOWED_COMMANDS=(
+  'node --test tests/phase.test.mjs'
+  'git add -A'
+  'git commit -m "Phase 1: parse the config file"'
+)
+```
+
+Write the strings yourself from the brief; never derive them from a prompt, a model's output or a project file such as package.json. Never grant a push, a publish, a review or another model's CLI. The brief dictates one fixed one-line commit message, and the commit string matches it character for character. Strings use only letters, digits, spaces and `_ - . / : = @ , + " '`, at most 16 of them, up to 512 characters each; anything else exits 64 before agy starts. The builder sees the strings verbatim; a command it changes may still be refused.
 
 ```bash
 WORKTREE=$(git rev-parse --show-toplevel) || exit 2
 WORKTREE=$(cd "$WORKTREE" && pwd -P) || exit 2
-ask-model --family "$BUILDER" --build --cwd "$WORKTREE" --effort "$EFFORT" --prompt-file "$BRIEF_FILE" --json
+ALLOW_FLAGS=()
+for granted in ${ALLOWED_COMMANDS[@]+"${ALLOWED_COMMANDS[@]}"}; do ALLOW_FLAGS+=(--allow-command "$granted"); done
+ask-model --family "$BUILDER" --build --cwd "$WORKTREE" --effort "$EFFORT" --prompt-file "$BRIEF_FILE" ${ALLOW_FLAGS[@]+"${ALLOW_FLAGS[@]}"} --json
 ```
 
 A successful call exits 0 with `build.execution: "native"`, `build.completed: true` and `served.verified: false`. It uses normal agy permissions. Inspect the actual worktree and commits after a call. A failed call can leave edits. Record the dispatched family as the builder and report the served model as unverified.

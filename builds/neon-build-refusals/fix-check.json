@@ -1,0 +1,53 @@
+{
+  "id": "fix-1795817296142-c51365",
+  "kind": "fix-check",
+  "review": "2026-11-27-21-34-57-8892f1",
+  "head": "34f9f07177dcd70d03f6717e879db8b42dfde016",
+  "family": "sol-prev",
+  "model": "gpt-6.1-sol",
+  "findingDetails": [
+    {
+      "issue": "f2 remains partially repaired: existing subagent identity records are never merged. I reproduced updates containing conversation_id plus ERROR, then log_uri plus a deny-rule error, then both IDs together. The linking update selects one record but leaves the other separate, so the failure state and refusal message never meet. readAnswer returns an answer with denied: [] and no failure exit, allowing the outer build path to emit completed: true.",
+      "file": "tools/ask-model.mjs",
+      "line": "1691",
+      "quote": "      const sub = record(ids.find((id) => known.has(id)) ?? ids[0] ?? Symbol());\n      for (const id of ids) if (!known.has(id)) known.set(id, sub);",
+      "suggestion": "When an update links existing IDs, merge their accumulated evidence, repoint every alias to the merged record, and reclassify it. Add a regression covering both aliases arriving separately before the linking update.",
+      "likelihood": 2,
+      "impact": 7,
+      "protected": false,
+      "trigger": "A native build streams a subagent's failed state and refusal message under separate conversation_id and log_uri aliases before linking them. Reproduced with synthetic stream-json; occurrence in live agy 1.5.14 is unverified.",
+      "preExisting": false,
+      "risk": 14,
+      "severity": "medium",
+      "filed": false,
+      "status": "verified-quote",
+      "id": "x1",
+      "inFix": true
+    },
+    {
+      "issue": "Hardening note. `--allow-command` checks only the characters of each string, not what the command is, so any command the orchestrator model names is granted to the agy builder. Strings such as `git commit --no-verify -m \"x\"`, `git push --no-verify origin HEAD`, `gh pr merge 12 --merge` or `git config core.hooksPath /x` all pass `ALLOW_COMMAND_RE`. Two barriers that would stop the same command typed by the orchestrator do not apply. First, agent-guard.mjs only inspects a word whose basename is `git` (line 381), and here the whole command is one quoted argument to `ask-model`, so the guard does not see it. Second, the guard installer covers Claude, Codex, Grok and Cursor only, so agy runs the granted command with no guard hook. The only rule against such grants is prose: the build skill's \"Never grant a push, a publish, a review or another model's CLI\" and the prompt preamble, which docs/neon-builder.md itself calls \"instructions, not a security boundary\". The harmed principal is the operator: a commit or push that skips the review gate's hooks can be made unattended by a builder, where before this branch the `normal`-mode probe (no grants) recorded the builder's test command as refused before execution. Not `protected`: this is a guard phrasing gap, not a flaw in the gate's own push or close logic.",
+      "file": "tools/ask-model.mjs",
+      "line": "111",
+      "quote": "const ALLOW_COMMAND_RE = /^[A-Za-z0-9 _\\-.\\/:=@,+\"']+$/;",
+      "suggestion": "In `allowCommandsProblem`, refuse the commands the skill already forbids, before agy starts (exit 64): `git push` and `git send-pack`, `git config`, `--no-verify` or `-n` on `git commit`, `-c`/`--config-env` hook overrides, `gh pr merge|create`, and other model CLIs (`ask-model`, `codex`, `claude`, `grok`, `agy`). Preferably reuse agent-guard's own `gitReason` check on each string so the two cannot drift.",
+      "likelihood": 2,
+      "impact": 5,
+      "protected": false,
+      "trigger": "An orchestrator running the build skill puts a gate-bypassing or publishing command in `ALLOWED_COMMANDS`, for example retrying with `git commit --no-verify -m \"\u2026\"` after a builder's commit was stopped by a hook, or copying a push or deploy line from a brief or plan that repository content steered. The skill's normal grants (a test, `git add`, one commit line) do not reach it; it needs the orchestrator to break its skill's prose rule.",
+      "preExisting": false,
+      "risk": 10,
+      "severity": "low",
+      "filed": true,
+      "status": "verified-quote",
+      "source": "security",
+      "id": "x2",
+      "inFix": false
+    }
+  ],
+  "security": {
+    "status": "ran",
+    "family": "mythos",
+    "model": "claude-mythos-5-2",
+    "effort": "high"
+  }
+}

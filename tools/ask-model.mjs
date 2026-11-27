@@ -99,11 +99,32 @@ import { EFFORTS, VENDOR_PREFIXES, loadRegistry, resolveModel, vendorOf } from '
 import { familyEffort, pauseLine, resolveFlavor, resolveRole } from '../lib/roles.js';
 
 const SELF = fileURLToPath(import.meta.url);
-const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools | --x-search | --build] [--json] [--cwd <dir>]'
+const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools | --x-search | --build [--allow-command <command>]…] [--json] [--cwd <dir>]'
   + '\n  --x-search: grok only; leaves x_keyword_search, x_semantic_search, x_user_search and x_thread_fetch; open_page and open_page_with_find '
   + 'cannot be disallowed by name; each run is checked afterwards against grok\'s session record'
-  + '\n  --build: uses the tested agy version with normal Antigravity permissions; requires --family or --role builder and an explicit canonical Git worktree root in --cwd';
+  + '\n  --build: uses the tested agy version with normal Antigravity permissions; requires --family or --role builder and an explicit canonical Git worktree root in --cwd'
+  + '\n  --allow-command: --build only, up to 16 times; gives agy a session allow rule for that one command string (letters, digits, spaces and _ - . / : = @ , + " \' only)';
 const VALUE_FLAGS = { '--role': 'role', '--family': 'family', '--effort': 'effort', '--effort-from': 'effortFrom', '--prompt-file': 'promptFile', '--schema': 'schemaFile', '--cwd': 'cwd' };
+// --allow-command strings become agy rules, command(<string>), for one build. The live probes saw such a rule let through
+// the one command written in it; whether agy matches a rule exactly or as a prefix is unverified. So the set leaves out
+// what would chain, redirect, expand or glob a command, and the parentheses that would end the rule early.
+const ALLOW_COMMAND_RE = /^[A-Za-z0-9 _\-.\/:=@,+"']+$/;
+const ALLOW_COMMAND_MAX = 16;
+const ALLOW_COMMAND_LENGTH = 512;
+
+/** Why a list of --allow-command strings cannot become agy rules, or null. */
+function allowCommandsProblem(list) {
+  if (!Array.isArray(list)) return '--allow-command takes a list of command strings';
+  if (list.length > ALLOW_COMMAND_MAX) return `--allow-command is given ${list.length} times; at most ${ALLOW_COMMAND_MAX} commands`;
+  for (const [i, c] of list.entries()) {
+    if (typeof c !== 'string') return '--allow-command takes a command string';
+    if (!c.length || c.length > ALLOW_COMMAND_LENGTH) return `--allow-command takes 1 to ${ALLOW_COMMAND_LENGTH} characters, not ${c.length}`;
+    if (!ALLOW_COMMAND_RE.test(c)) return `--allow-command ${JSON.stringify(c)} holds a character other than letters, digits, spaces and _ - . / : = @ , + " '`;
+    if (c !== c.trim()) return `--allow-command ${JSON.stringify(c)} starts or ends with a space`;
+    if (list.indexOf(c) !== i) return `--allow-command ${JSON.stringify(c)} is given twice`;
+  }
+  return null;
+}
 
 // What each CLI may use. Claude and grok are read-only by these allowlists alone
 // (their plan modes and denylists were observed to still write); codex by its sandbox.
@@ -574,7 +595,8 @@ const VENDORS = ['claude', 'codex', 'grok', 'agy'];
 const unwired = (vendor) => `ask-model has no ${vendor} CLI wiring (it runs ${VENDORS.join(', ')})`;
 
 /** The argv for one call. `mcpOff` is codex's overrides that switch its MCP servers off (codexMcpOff). */
-function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = null, logFile = null }) {
+function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = null, logFile = null, allowCommands = [] }) {
+  if (allowCommands.length && (vendor !== 'agy' || mode !== 'build')) throw new Error('--allow-command is only for an agy --build');
   // The structured-output flags review.mjs passes: the schema's JSON for claude and grok, its file for codex.
   const json = schema ? ['--json-schema', JSON.stringify(schema.doc)] : [];
   if (vendor === 'claude') {
@@ -596,11 +618,15 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = 
   if (vendor === 'agy') {
     if (mode !== 'read-only' && mode !== 'build') throw new Error(`agy runs read-only only, not ${mode}`);
     if (!logFile) throw new Error('agy needs a --log-file path for the call');
+    const badAllow = allowCommandsProblem(allowCommands);
+    if (badAllow) throw new Error(badAllow);
+    // A build's allow rules go in --settings for this call alone; with none, no --settings at all.
+    const allow = allowCommands.length ? ['--settings', JSON.stringify({ permissions: { allow: allowCommands.map((c) => `command(${c})`) } })] : [];
     // stream-json for its init event (the model agy was asked for) and each tool step (a denied one ends ERROR);
     // --disable-slash-commands so a prompt starting with / is text; --log-file so the call's own log is kept.
     return ['-p', prompt, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'stream-json',
       '--print-timeout', AGY_PRINT_TIMEOUT, '--disable-slash-commands',
-      ...(mode === 'build' ? ['--mode', 'accept-edits'] : ['--settings', JSON.stringify(AGY_SETTINGS)]),
+      ...(mode === 'build' ? ['--mode', 'accept-edits', ...allow] : ['--settings', JSON.stringify(AGY_SETTINGS)]),
       '--log-file', logFile, ...json];
   }
   if (vendor !== 'grok') throw new Error(unwired(vendor));
@@ -1090,6 +1116,13 @@ function parse(argv) {
     if (a === '--no-tools') { o.noTools = true; continue; }
     if (a === '--min-tools') { o.minTools = true; continue; }
     if (a === '--x-search') { o.xSearch = true; continue; }
+    // Repeatable, so it is read before the one-value flags, which refuse a second use.
+    if (a === '--allow-command') {
+      const v = argv[++i];
+      if (v === undefined || v.startsWith('-')) return { error: '--allow-command needs a value' };
+      (o.allowCommands ??= []).push(v);
+      continue;
+    }
     const key = VALUE_FLAGS[a];
     if (!key) return { error: `unexpected argument ${JSON.stringify(a)}` };
     const v = argv[++i];
@@ -1106,6 +1139,11 @@ function parse(argv) {
     if (o.effortFrom.some((n) => !n)) return { error: '--effort-from takes role names separated by commas' };
   }
   if (o.promptFile === undefined) return { error: '--prompt-file is required' };
+  if (o.allowCommands) {
+    if (!o.build) return { error: '--allow-command is only for --build' };
+    const bad = allowCommandsProblem(o.allowCommands);
+    if (bad) return { error: bad };
+  }
   if (o.build) {
     if (o.cwd === undefined) return { error: '--build requires an explicit --cwd at the canonical Git worktree root' };
     if (o.role !== undefined && o.role !== 'builder') return { error: '--build only accepts the builder role' };
@@ -1596,7 +1634,81 @@ function grokXRecord(sessionId, cwd, grokHome) {
 
 const agyToolName = (value) => typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/i.test(value);
 
-function agyBuildActions(steps, complete) {
+// Only a step's state and its tool error are read: answer text, tool output and subagent prompts can quote these
+// phrases without anything having been refused.
+function agyRefusal(state, message) {
+  if (state !== 'ERROR' && state !== 'DENIED') return null;
+  const text = typeof message === 'string' ? message : '';
+  return /deny rule/i.test(text) ? 'deny-rule'
+    : /approval|consent/i.test(text) ? 'approval-required'
+      : /EACCES|EPERM|permission denied|operation not permitted/i.test(text) ? 'permission-denied'
+        : state === 'DENIED' || /user denied|denied permission/i.test(text) ? 'denied'
+          : /ENOENT|no such file|not found/i.test(text) ? 'not-found' : null;
+}
+
+const AGY_DENIALS = { 'deny-rule': 'blocked by deny rule', 'approval-required': 'needed an approval', 'permission-denied': 'permission denied', denied: 'denied' };
+const AGY_LIST_LIMIT = 64;
+const agyBounded = (list) => list.length > AGY_LIST_LIMIT
+  ? [...list.slice(0, AGY_LIST_LIMIT - 1), `(${list.length - AGY_LIST_LIMIT + 1} more not listed)`] : list;
+const agyLabel = (value) => typeof value === 'string' && /^[a-z][a-z0-9_ -]{0,63}$/i.test(value);
+
+/**
+ * Every refused action a build's stream shows, from the raw steps and every result event rather than the bounded
+ * `actions` trace or the last result: a later DONE update or result, the action cap or a tool name the trace can't
+ * report never hides a refusal seen earlier. A subagent's own steps are in its transcript, which a build does not
+ * read, so its refusals are found only when the stream itself carries them. The returned `byStep` maps each refused
+ * indexed step to its kind, for the trace.
+ */
+function agyBuildDenials(steps, results) {
+  const found = new Map(), known = new Map(), refusedSteps = new Map();
+  const record = (key) => {
+    if (typeof key === 'symbol') return {};
+    if (!known.has(key)) known.set(key, {});
+    return known.get(key);
+  };
+  // agy can send a step's ERROR state and its error message in separate updates. A field an update leaves out keeps
+  // what an earlier update of the same step said, and a failed state stays known after a later DONE.
+  const classify = (r, state, message) => {
+    if (state === 'ERROR' || state === 'DENIED') r.failed = state;
+    if (typeof message === 'string') r.message = message;
+    return agyRefusal(r.failed, r.message);
+  };
+  const add = (r, kind, label) => { if (!found.has(r)) found.set(r, () => `${label()}: ${AGY_DENIALS[kind]}`); };
+  for (const step of steps) {
+    const indexed = Number.isSafeInteger(step.step_index) && step.step_index >= 0;
+    const key = indexed ? JSON.stringify([step.conversation_id ?? null, step.step_index]) : Symbol();
+    const r = record(key);
+    for (const name of [step.tool_name, step.tool_info?.name]) if (!agyToolName(r.tool) && agyToolName(name)) r.tool = name;
+    const refusal = classify(r, step.state, step.tool_info?.error?.message);
+    if (AGY_DENIALS[refusal]) {
+      add(r, refusal, () => (agyToolName(r.tool) ? r.tool : '(unnamed)'));
+      if (indexed && !refusedSteps.has(key)) refusedSteps.set(key, refusal);
+    }
+    for (const s of Array.isArray(step.subagent_info?.subagents) ? step.subagent_info.subagents : []) {
+      if (!isObject(s)) continue;
+      // agy names a subagent by conversation_id and log_uri, not always both in one update.
+      const ids = [s.conversation_id, s.log_uri].filter((v) => typeof v === 'string').map((v) => JSON.stringify(['subagent', v]));
+      const sub = record(ids.find((id) => known.has(id)) ?? ids[0] ?? Symbol());
+      for (const id of ids) if (!known.has(id)) known.set(id, sub);
+      if (!agyLabel(sub.name) && agyLabel(s.type_name)) sub.name = s.type_name;
+      if (Array.isArray(s.denied_actions) && s.denied_actions.length) sub.approvals = true;
+      const own = classify(sub, s.state ?? s.status, isObject(s.error) ? s.error.message : s.error);
+      const nested = AGY_DENIALS[own] ? own : sub.approvals ? 'approval-required' : null;
+      if (nested) add(sub, nested, () => `subagent${sub.name === undefined ? '' : ` (${sub.name})`}`);
+    }
+  }
+  for (const result of results) {
+    const approvals = Array.isArray(result?.denied_actions) ? result.denied_actions : isObject(result?.denied_actions) ? [result.denied_actions] : [];
+    for (const d of approvals) {
+      const action = agyLabel(d?.action) ? d.action : '(unnamed)';
+      found.set(Symbol(), () => `${action}: needed an approval print mode cannot give`);
+    }
+  }
+  const all = [...found.values()].map((entry) => entry());
+  return { count: all.length, listed: agyBounded(all), byStep: refusedSteps };
+}
+
+function agyBuildActions(steps, complete, refused = new Map()) {
   const actions = new Map();
   let actionsTruncated = false;
   const pathKeys = ['AbsolutePath', 'TargetFile', 'FilePath', 'TargetPath', 'DirectoryPath', 'Path'];
@@ -1641,16 +1753,15 @@ function agyBuildActions(steps, complete) {
       if (targets.size > 1 || (action.target && targets.size && !targets.has(action.target))) complete = false;
       if (targets.size === 1) [action.target] = targets;
     }
-    if (state === 'ERROR' || state === 'DENIED') {
-      const error = String(info?.error?.message ?? '');
-      action.refusal = /deny rule/i.test(error) ? 'deny-rule'
-        : /approval|consent/i.test(error) ? 'approval-required'
-          : /EACCES|EPERM|permission denied|operation not permitted/i.test(error) ? 'permission-denied'
-            : /ENOENT|no such file|not found/i.test(error) ? 'not-found'
-              : state === 'DENIED' ? 'denied' : previous?.refusal ?? 'tool-error';
-    } else delete action.refusal;
+    // A refusal stays on its action through later updates, as it does in agyBuildDenials; other errors do not.
+    if (!AGY_DENIALS[previous?.refusal]) {
+      if (state === 'ERROR' || state === 'DENIED') action.refusal = agyRefusal(state, info?.error?.message) ?? previous?.refusal ?? 'tool-error';
+      else delete action.refusal;
+    }
     actions.set(key, action);
   }
+  // agyBuildDenials pairs a failed state and an error message sent in separate updates, which this loop does not.
+  for (const [key, kind] of refused) if (actions.has(key)) actions.get(key).refusal = kind;
   const reported = [...actions.values()];
   return { actions: reported, actionsTruncated, actionsComplete: complete && !actionsTruncated &&
     reported.every(({ state }) => state !== 'ACTIVE') };
@@ -1659,8 +1770,9 @@ function agyBuildActions(steps, complete) {
 /**
  * agy's answer from its stream-json events: the last response turn's text (else the result event's response). agy reports no model that answered, only
  * init.model, the echo of what it was asked for, so that is kept as requested and unverified (a different echo still
- * refuses, exit 2). A denied tool call does not fail agy's turn (status SUCCESS, exit 0); it shows as a tool step that
- * ended ERROR on a deny rule, and with no answer beside it the call failed.
+ * refuses, exit 2, or 4 for a build that also had an action refused). A denied tool call does not fail agy's turn
+ * (status SUCCESS, exit 0); it shows as a tool step that ended ERROR on a deny rule, and with no answer beside it the
+ * call failed. A build fails on any refused action, answer or not (agyBuildDenials).
  */
 function readAgy(id, r, family, build) {
   const events = [];
@@ -1670,26 +1782,26 @@ function readAgy(id, r, family, build) {
     try { events.push(JSON.parse(line)); } catch { streamParsed = false; }
   }
   const init = events.find((e) => e?.event === 'init')?.init;
-  const result = events.findLast((e) => e?.event === 'result')?.result;
+  const results = events.filter((e) => e?.event === 'result').map((e) => e.result);
+  const result = results.at(-1);
   const steps = events.map((e) => e?.step_update).filter(isObject);
-  const denied = steps.filter((u) => u.state === 'ERROR' && /deny rule/i.test(String(u.tool_info?.error?.message ?? '')))
-    .map((u) => build ? `${agyToolName(u.tool_name) ? u.tool_name : '(unnamed)'}: blocked by deny rule`
-      : `${u.tool_name}: ${String(u.tool_info.error.message).slice(0, 300)}`);
+  const buildDenials = build ? agyBuildDenials(steps, results) : null;
+  const refused = buildDenials?.count ? `agy refused ${buildDenials.count} of the builder's action(s), so the build is not complete` : null;
+  const denied = build ? buildDenials.listed : steps.filter((u) => u.state === 'ERROR' && /deny rule/i.test(String(u.tool_info?.error?.message ?? '')))
+    .map((u) => `${u.tool_name}: ${String(u.tool_info.error.message).slice(0, 300)}`);
   // Actions that needed an approval print mode cannot give (a read outside the workspace, say): agy lists them in
   // denied_actions, and the turn still ends SUCCESS.
-  if (Array.isArray(result?.denied_actions)) {
-    for (const d of result.denied_actions) {
-      const action = build && (typeof d?.action !== 'string' || !/^[a-z][a-z0-9_ -]{0,63}$/i.test(d.action)) ? null : d?.action;
-      denied.push(`${action ?? '(unnamed)'}: needed an approval print mode cannot give`);
-    }
+  if (!build && Array.isArray(result?.denied_actions)) {
+    for (const d of result.denied_actions) denied.push(`${d?.action ?? '(unnamed)'}: needed an approval print mode cannot give`);
   }
   const sub = agySubagentDenials(steps, undefined, family, { includeTranscripts: !build });
   denied.push(...sub.denied);
+  const notes = build ? agyBounded(sub.notes) : sub.notes;
   // Builder diagnostics leave the private launch directory only as structured denial evidence.
   const trace = build ? agyBuildActions(steps, streamParsed && isObject(init) && isObject(result) &&
     events[0]?.event === 'init' && events.at(-1)?.event === 'result' && events.slice(1, -1).every((event) =>
-      event?.event === 'step_update' && isObject(event.step_update))) : {};
-  const evidence = build ? { denied, notes: sub.notes, ...trace } : {};
+      event?.event === 'step_update' && isObject(event.step_update)), buildDenials.byStep) : {};
+  const evidence = build ? { denied, notes, ...trace } : {};
   if (r.code !== 0 || !isObject(result)) {
     const why = build ? `agy builder failed (exit ${r.code})`
       : `agy failed (exit ${r.code}${result?.status ? `, status ${result.status}` : ''}): ${tail(r.stderr || r.stdout)}`;
@@ -1702,7 +1814,9 @@ function readAgy(id, r, family, build) {
   }
   if (typeof init?.model === 'string' && init.model !== id) {
     const reported = build && !/^[a-z0-9][a-z0-9_.-]{0,127}$/i.test(init.model) ? '(invalid model id)' : init.model;
-    return { exit: 2, error: `asked for ${id}, but agy reports it was asked for ${reported} — not its answer`, ...evidence };
+    const mismatch = `asked for ${id}, but agy reports it was asked for ${reported} — not its answer`;
+    // Exit 4 is what tells the caller the builder was refused, so it outranks the mismatch's 2.
+    return refused ? { exit: 4, error: `${refused}; ${mismatch}`, ...evidence } : { exit: 2, error: mismatch, ...evidence };
   }
   const served = { requested: typeof init?.model === 'string' ? init.model : null, verified: false };
   // result.response joins every response turn's text (a schema answer agy's finish tool refused, then the retry):
@@ -1711,9 +1825,11 @@ function readAgy(id, r, family, build) {
   for (const u of steps) if (u.step_type === 'agent_response' && typeof u.text_delta === 'string') turns.set(u.step_index, (turns.get(u.step_index) ?? '') + u.text_delta);
   const text = [...turns.entries()].sort((x, y) => y[0] - x[0]).map(([, t]) => t).find((t) => t.trim()) ?? result.response;
   if (typeof text !== 'string' || !text.trim()) {
-    return { exit: 4, error: `agy returned an empty answer${denied.length ? ` after ${denied.length} denied tool call(s): ${denied.join('; ')}` : ''}`, served, denied, notes: sub.notes, ...trace };
+    return { exit: 4, error: `agy returned an empty answer${denied.length ? ` after ${build ? buildDenials.count : denied.length} denied tool call(s): ${denied.join('; ')}` : ''}`, served, denied, notes, ...trace };
   }
-  return { answer: text, served, denied, notes: sub.notes, ...trace };
+  // A refused action means the build did not do what it was asked, whatever its answer says.
+  if (refused) return { exit: 4, error: refused, served, ...evidence };
+  return { answer: text, served, denied, notes, ...trace };
 }
 
 /**
@@ -1918,8 +2034,15 @@ async function main(argv) {
     try { agyTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-build-')); }
     catch { result.error = 'a private log directory could not be created, so agy was not run'; return finish(4); }
     logFile = path.join(agyTmp, 'agy.log');
+    // Each rule names one string, and a variant of it may not match, so the model is told the strings verbatim. Other
+    // commands are not said to be refused: normal Antigravity permissions still decide those.
+    const granted = o.allowCommands?.length
+      ? 'This build has a session rule for each command below. When you run one, run it exactly as written, with nothing '
+        + 'added, removed or changed. A different command may be refused, and any refused action fails the build.\n'
+        + o.allowCommands.map((c) => `- \`${c}\``).join('\n') + '\n\n'
+      : '';
     prompt = 'You are the implementer for this task. Do not invoke other models, delegate, or run reviews or grades. '
-      + 'Do not push, open a pull request, or merge. Follow the task and report what you changed and checked.\n\n' + prompt;
+      + 'Do not push, open a pull request, or merge. Follow the task and report what you changed and checked.\n\n' + granted + prompt;
   } else if (vendor === 'agy') {
     // The workspace and home first: they need no agy process, and an unprobed agy could load what they would refuse.
     const workspace = agyWorkspaceFiles(cwd);
@@ -2000,7 +2123,7 @@ async function main(argv) {
   // A role name is a watch kind as it stands; a family names no job, so its line says ask.
   startWatch(o.role !== undefined && /^[a-z][a-z0-9-]{0,31}$/.test(o.role) ? o.role : 'ask');
   let args;
-  try { args = argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff, schema, logFile }); } catch (e) { result.error = `${e.message} — ${vendor} was not run`; return finish(4); }
+  try { args = argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff, schema, logFile, allowCommands: o.allowCommands ?? [] }); } catch (e) { result.error = `${e.message} — ${vendor} was not run`; return finish(4); }
   const r = wall ? await run(SANDBOX_EXEC, agyWall(wall, [bin, ...args]), cwd, env)
     : await run(bin, args, cwd, env, { nativeBuild: o.build });
   // A call grok refused for want of approval leaves only this line, and grok still exits 0.
@@ -2073,7 +2196,7 @@ async function main(argv) {
   return finish(got.exit ?? 0);
 }
 
-export { AGY_ENV, AGY_TOKEN_FIX, AGY_TOKEN_PATH, AGY_WALL, SANDBOX_EXEC, agyAfterCall, agyReadRoot, agySubagentDenials, agyTokenLeft, agyWall, agyWallCanary, agyWallParams, agyWallProblem, argvFor, readAnswer, sandboxProblem };
+export { AGY_ENV, AGY_TOKEN_FIX, AGY_TOKEN_PATH, AGY_WALL, SANDBOX_EXEC, agyAfterCall, agyReadRoot, agySubagentDenials, agyTokenLeft, agyWall, agyWallCanary, agyWallParams, agyWallProblem, allowCommandsProblem, argvFor, readAnswer, sandboxProblem };
 
 /**
  * For `model-id --install`, after it has copied the resolver: this file beside

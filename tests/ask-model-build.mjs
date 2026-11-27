@@ -85,8 +85,16 @@ else if (kind === 'fifo-log') {
 if (kind === 'left-token') writeToken();
 fs.writeFileSync('source.txt', 'native fixture edit');
 const id = value('--model');
+// Kinds not listed stream a clean build: one edit and no refusal.
+const refused = ['denied', 'mismatch', 'empty', 'nonzero', 'bad-status', 'large-trace', 'complete-trace', 'ambiguous-trace', 'invalid-stream', 'unknown-event'].includes(kind);
   const events = [
-    { event: 'init', init: { model: kind === 'mismatch' ? 'different-model' : id } },
+    { event: 'init', init: { model: ['mismatch', 'clean-mismatch'].includes(kind) ? 'different-model' : id } },
+    ...(!refused ? [
+      { step_update: { step_index: 0, state: 'ACTIVE', tool_name: 'write_to_file', tool_info: {
+        parameters: { TargetFile: './source.txt', CodeContent: diagnostic },
+      } } },
+      { step_update: { step_index: 0, state: 'DONE', tool_name: 'write_to_file' } },
+    ] : [
     { step_update: { step_index: 0, state: 'ERROR', tool_name: 'run_command', tool_info: { error: { message: 'blocked by deny rule' } } } },
     { step_update: { step_index: 1, state: 'ACTIVE', tool_name: 'read_file', tool_info: {
       parameters: { AbsolutePath: '/fixture/other-project.txt', Content: diagnostic },
@@ -102,8 +110,12 @@ const id = value('--model');
       parameters: { Url: 'https://user:' + diagnostic + '@example.test/target?token=' + diagnostic + '#' + diagnostic },
       error: { message: 'blocked by deny rule: ' + diagnostic },
     } } },
-    ...(!['complete-trace', 'ambiguous-trace', 'invalid-stream', 'unknown-event', 'large-trace'].includes(kind) ? [{ step_update: {
+    ]),
+    ...(['denied', 'mismatch', 'empty', 'nonzero', 'bad-status', 'subagent'].includes(kind) ? [{ step_update: {
       subagent_info: { subagents: [{ type_name: 'fixture worker', log_uri: 'file:///no-such-fixture/transcript.jsonl' }] },
+    } }] : []),
+    ...(kind === 'many-subagents' ? [{ step_update: {
+      subagent_info: { subagents: Array.from({ length: 70 }, (_, i) => ({ type_name: 'fixture worker', log_uri: 'file:///no-such-fixture/' + i + '/transcript.jsonl' })) },
     } }] : []),
     ...(kind === 'ambiguous-trace' ? [{ step_update: { step_index: 1, state: 'DONE', tool_name: 'read_file' } }] : []),
     ...(kind === 'unknown-event' ? [{ event: 'unclassified_update' }] : []),
@@ -114,7 +126,7 @@ const id = value('--model');
     { event: 'result', result: {
       status: kind === 'bad-status' ? 'ERROR' : 'SUCCESS',
       response: kind === 'bad-status' ? diagnostic : kind === 'empty' ? '' : 'fixture answer',
-      denied_actions: [{ action: 'outside read' }],
+      ...(refused ? { denied_actions: [{ action: 'outside read' }] } : {}),
     } },
   ];
   if (kind === 'large-trace') {
@@ -222,18 +234,13 @@ test('installed build makes a native edit using the exact argv, preferred builde
   assert.ok(!Object.hasOwn(doc, 'logFile'));
   assert.equal(doc.changed, null);
   assert.equal(fs.readFileSync(path.join(f.root, 'source.txt'), 'utf8'), 'native fixture edit');
-  assert.deepEqual(doc.denied, ['run_command: blocked by deny rule', 'read_url: blocked by deny rule', 'outside read: needed an approval print mode cannot give']);
-  assert.deepEqual(doc.actions, [
-    { tool: 'run_command', state: 'ERROR', refusal: 'deny-rule' },
-    { tool: 'read_file', state: 'ERROR', target: '/fixture/other-project.txt', refusal: 'permission-denied' },
-    { tool: 'write_file', state: 'ERROR', target: '/fixture/outside.txt', refusal: 'approval-required' },
-    { tool: 'read_url', state: 'ERROR', target: 'https://example.test/target', refusal: 'deny-rule' },
-  ]);
-  assert.equal(doc.actionsComplete, false, 'subagent activity is outside this trace');
+  assert.ok(!Object.hasOwn(doc, 'denied'));
+  assert.ok(!Object.hasOwn(doc, 'notes'));
+  assert.deepEqual(doc.actions, [{ tool: 'write_to_file', state: 'DONE', target: './source.txt' }]);
+  assert.equal(doc.actionsComplete, true);
   assert.equal(doc.actionsTruncated, false);
   assert.doesNotMatch(r.stderr + r.stdout, new RegExp(diagnostic));
-  assert.match(doc.notes[0], /fixture worker/);
-  assert.match(r.stderr, /denied run_command: blocked by deny rule/);
+  assert.doesNotMatch(r.stderr, /ask-model: agy: denied/);
   assert.match(r.stderr, /was requested \(unverified\)\./);
   assert.doesNotMatch(r.stderr, /agy\.log/);
   const { argv, ...call } = f.call();
@@ -280,12 +287,23 @@ test('installed build makes a native edit using the exact argv, preferred builde
   f.setRoles({});
   assert.equal(JSON.parse(f.ask([]).stdout).effort, null);
   assert.equal(calledFlag('--effort'), undefined);
+  f.fakeAgy('subagent');
+  const sub = f.ask([]);
+  assert.equal(sub.status, 0, sub.stderr);
+  const subDoc = JSON.parse(sub.stdout);
+  assert.deepEqual(subDoc.build, { execution: 'native', completed: true });
+  assert.equal(subDoc.answer, 'fixture answer');
+  assert.deepEqual(subDoc.notes, ['neon tried to start a subagent (fixture worker); its denied calls are unknown']);
+  assert.ok(!Object.hasOwn(subDoc, 'denied'));
+  assert.equal(subDoc.actionsComplete, false, 'subagent activity is outside this trace');
+  assert.match(sub.stderr, /ask-model: agy: neon tried to start a subagent \(fixture worker\)/);
 });
 
 test('build keeps denial evidence and omits completion after unsuccessful model output', (t) => {
   const f = fixture(t);
   for (const [kind, status, error] of [
-    ['mismatch', 2, /different-model/],
+    ['denied', 4, /^agy refused 5 of the builder's action\(s\), so the build is not complete\. Inspect the worktree/],
+    ['mismatch', 4, new RegExp(`^agy refused 5 of the builder's action\\(s\\), so the build is not complete; asked for ${neon.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}, but agy reports it was asked for different-model — not its answer\\. Inspect the worktree`)],
     ['empty', 4, /empty answer/],
     ['nonzero', 4, /agy builder failed \(exit 7\)/],
     ['bad-status', 4, /did not report a successful result/],
@@ -299,28 +317,74 @@ test('build keeps denial evidence and omits completion after unsuccessful model 
     assert.equal(doc.changed, null);
     assert.ok(!Object.hasOwn(doc, 'brokerEvents'));
     assert.ok(!Object.hasOwn(doc, 'build'));
-    assert.equal(doc.denied.length, 3);
-    assert.equal(doc.notes.length, 1);
-    assert.equal(doc.actions.length, 4);
+    assert.deepEqual(doc.denied, [
+      'run_command: blocked by deny rule', 'read_file: permission denied', 'write_file: needed an approval',
+      'read_url: blocked by deny rule', 'outside read: needed an approval print mode cannot give',
+    ], kind);
+    assert.deepEqual(doc.notes, ['neon tried to start a subagent (fixture worker); its denied calls are unknown']);
+    assert.deepEqual(doc.actions, [
+      { tool: 'run_command', state: 'ERROR', refusal: 'deny-rule' },
+      { tool: 'read_file', state: 'ERROR', target: '/fixture/other-project.txt', refusal: 'permission-denied' },
+      { tool: 'write_file', state: 'ERROR', target: '/fixture/outside.txt', refusal: 'approval-required' },
+      { tool: 'read_url', state: 'ERROR', target: 'https://example.test/target', refusal: 'deny-rule' },
+    ]);
     assert.doesNotMatch(r.stderr + r.stdout, new RegExp(diagnostic));
+    assert.match(r.stderr, /denied run_command: blocked by deny rule/);
     assert.match(r.stderr, /denied outside read/);
+    assert.doesNotMatch(r.stderr, /was requested \(unverified\)/);
     assert.ok(!fs.existsSync(f.vendorCalled));
     assert.match(doc.error, /Inspect the worktree before retrying/);
     assert.equal(fs.readFileSync(path.join(f.root, 'source.txt'), 'utf8'), 'native fixture edit');
     assert.deepEqual(fs.readdirSync(f.sessionTmp), []);
   }
+  f.fakeAgy('denied');
+  const refusedPlain = f.ask([], { json: false });
+  assert.equal(refusedPlain.status, 4, refusedPlain.stderr);
+  assert.equal(refusedPlain.stdout, '');
+  assert.match(refusedPlain.stderr, /agy refused 5 of the builder's action\(s\)/);
   f.fakeAgy();
   const plain = f.ask([], { json: false });
   assert.equal(plain.status, 0, plain.stderr);
   assert.equal(plain.stdout, 'fixture answer\n');
 });
 
+test('a model mismatch with no refusal still exits 2 and claims no completion', (t) => {
+  const f = fixture(t);
+  f.fakeAgy('clean-mismatch');
+  const r = f.ask([]);
+  assert.equal(r.status, 2, r.stderr);
+  const doc = JSON.parse(r.stdout);
+  assert.match(doc.error, /^asked for \S+, but agy reports it was asked for different-model — not its answer\. Inspect the worktree/);
+  assert.equal(doc.answer, null);
+  assert.ok(!Object.hasOwn(doc, 'build'));
+  assert.ok(!Object.hasOwn(doc, 'denied'));
+  assert.ok(!Object.hasOwn(doc, 'notes'));
+  assert.deepEqual(doc.actions, [{ tool: 'write_to_file', state: 'DONE', target: './source.txt' }]);
+  assert.doesNotMatch(r.stderr, /ask-model: agy: denied/);
+  assert.doesNotMatch(r.stderr, /was requested \(unverified\)/);
+});
+
+test('build notes stop at 64 in the receipt and on stderr', (t) => {
+  const f = fixture(t);
+  f.fakeAgy('many-subagents');
+  const r = f.ask([]);
+  assert.equal(r.status, 0, r.stderr);
+  const doc = JSON.parse(r.stdout);
+  assert.deepEqual(doc.build, { execution: 'native', completed: true });
+  const note = 'neon tried to start a subagent (fixture worker); its denied calls are unknown';
+  assert.deepEqual(doc.notes, [...Array(63).fill(note), '(7 more not listed)']);
+  const lines = r.stderr.split('\n').filter((line) => line.startsWith('ask-model: agy: '));
+  assert.deepEqual(lines, [...Array(63).fill(`ask-model: agy: ${note}`), 'ask-model: agy: (7 more not listed)']);
+});
+
 test('the build trace bounds the number of actions and target length', (t) => {
   const f = fixture(t);
   f.fakeAgy('large-trace');
   const r = f.ask([]);
-  assert.equal(r.status, 0, r.stderr);
-  const { actions, actionsComplete, actionsTruncated } = JSON.parse(r.stdout);
+  assert.equal(r.status, 4, r.stderr);
+  const { actions, actionsComplete, actionsTruncated, build, error } = JSON.parse(r.stdout);
+  assert.equal(build, undefined);
+  assert.match(error, /^agy refused 5 of the builder's action\(s\)/);
   assert.equal(actions.length, 64);
   assert.equal(actions[1].target, '/fixture/other-project.txt');
   assert.deepEqual(actions.at(-1), { tool: 'read_file', state: 'DONE' });
@@ -334,14 +398,19 @@ test('build completeness requires a fully parsed stream with unambiguous termina
   for (const [kind, expected] of [['complete-trace', true], ['ambiguous-trace', false], ['invalid-stream', false], ['unknown-event', false]]) {
     f.fakeAgy(kind);
     const r = f.ask([]);
-    assert.equal(r.status, 0, r.stderr);
-    const { actions, actionsComplete, actionsTruncated } = JSON.parse(r.stdout);
+    assert.equal(r.status, 4, r.stderr);
+    const { actions, actionsComplete, actionsTruncated, build, denied, error } = JSON.parse(r.stdout);
+    assert.equal(build, undefined, kind);
+    assert.match(error, /^agy refused 5 of the builder's action\(s\)/, kind);
+    assert.ok(denied.includes('read_file: permission denied'), kind);
     assert.equal(actionsComplete, expected, kind);
     assert.equal(actionsTruncated, false, kind);
     if (expected) assert.deepEqual(actions.slice(-2), [
       { tool: 'write_to_file', state: 'DONE', target: './source.txt' },
       { tool: 'finish', state: 'DONE' },
     ]);
+    // A later DONE for the refused read neither clears its refusal nor the failure.
+    if (kind === 'ambiguous-trace') assert.deepEqual(actions[1], { tool: 'read_file', state: 'DONE', target: '/fixture/other-project.txt', refusal: 'permission-denied' });
   }
 });
 
