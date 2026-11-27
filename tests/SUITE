@@ -112,6 +112,8 @@ tests/ask-model-watch.mjs                             ci:offline
 # only inside macOS's sandbox-exec, so the Linux jobs see the refusal and stranger-macos runs the rest through the wall.
 tests/ask-model-agy.mjs                               ci:offline ci:stranger-macos
 tests/ask-model-build.mjs                             ci:offline ci:stranger-macos
+# A native build fails on any refused action in agy's stream and on nothing else (readAnswer only, temp HOME).
+tests/ask-model-build-denials.mjs                     ci:offline
 # agy's sandbox-exec wall: one profile in both runtimes; on macOS, the canary and the files it lets through (no model).
 tests/agy-wall.mjs                                    ci:offline ci:stranger-macos
 tests/agy-builder-source.mjs                          ci:offline
