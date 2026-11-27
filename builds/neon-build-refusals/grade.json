@@ -1,0 +1,36 @@
+{
+  "family": "sol",
+  "model": "gpt-6.2-sol",
+  "criteria": [
+    {
+      "id": "A1",
+      "criterion": "Two real high-effort normal/native-sandbox sessions report independent filesystem, test, commit, outside write/read and nonGoogle fetch observations, sign-in outcome and model proof unverified; <=3 calls ledger.",
+      "verdict": "PASS",
+      "evidence": "At tip 6d6cede, probe-observations.json:30–94 records two high-effort scoped sessions in distinct linked worktrees. Both ran the unchanged fixed test successfully, passed the independent post-session test, and left verified clean commits touching only value.cjs (113bf99 and 472b40a). The unchanged terminal observer wrote and read temporary siblings in both sessions. Its example.com fetch returned HTTP 200 under normal permissions and ENOTFOUND under --sandbox. Both native canary reads were refused, ending the turns before the native write and URL fetch were attempted (lines 103–111). Sign-in succeeded with no plaintext fallback reported or token file present. The served model remains unverified. The initial unscoped session changed value.cjs, hit a test-command refusal and made no commit, bringing the ledger to 3/3 calls. The raw streams were unavailable for independent hash verification."
+    },
+    {
+      "id": "A2",
+      "criterion": "Any observed denied action makes native completed true impossible, exit4 with bounded diagnostics; no earlier denial disappears after a terminal success. Synthetic fixtures check normal clean success, DENIED, deny rule, approval-required, permission error, denied_actions and nested evidence.",
+      "verdict": "FAIL",
+      "evidence": "All seven parser fixtures passed in memory and cover the requested cases, sticky step updates and the 64-entry denial cap. A separate in-memory check found that a result carrying denied_actions followed by a clean SUCCESS result returned an answer with no denial. tools/ask-model.mjs:1760–1762 scans only the last result, and line 2134 can therefore emit completed: true. A denial combined with a model mismatch also returns exit 2, as explicitly asserted in tests/ask-model-build-denials.mjs:163–168. A denial stream with 70 distinct subagent references emitted all 70 notes through tools/ask-model.mjs:1820–1827 and 2124–2126."
+    },
+    {
+      "id": "A3",
+      "criterion": "Read-only agy argv/wall/token refusal and other vendors unchanged, tested offline. Default sandbox decision matches probe evidence; conditional settings rules narrowly scoped, no auto or bypass.",
+      "verdict": "PASS",
+      "evidence": "An offline comparison against origin/main matched 12 argv combinations across agy, Claude, Codex and Grok and 13 wall and auth exports. log.md:89–95 records the passing stub suites, including the wall and token-refusal checks. The read-only grading environment blocked fresh end-to-end stub runs at temporary-directory setup. The three in-memory command-grant tests passed, and the compiled settings matched the recorded probe settings byte for byte. tools/ask-model.mjs:116–126 and 618–630 restrict grants to bounded per-call command strings on opt-in agy builds using accept-edits. The default stays on normal permissions because the sandbox probe still allowed terminal sibling reads and writes. The new wrapper flag has only been tested offline. Exact-match enforcement remains unverified."
+    }
+  ],
+  "findings": [
+    {
+      "likelihood": 2,
+      "impact": 5,
+      "protected": false,
+      "trigger": "A native build reads a missing optional file whose path contains approval or consent, then successfully uses a fallback.",
+      "issue": "An ordinary missing-file error is classified as a permission refusal and fails the build.",
+      "file": "tools/ask-model.mjs",
+      "line": "1643",
+      "evidence": "An in-memory stream with ENOENT for /fixture/approval.json followed by SUCCESS returned exit 4 and read_file: needed an approval. The approval regex matches the filename before the classifier checks for ENOENT."
+    }
+  ]
+}
