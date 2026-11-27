@@ -1,0 +1,12 @@
+{
+  "c1": {
+    "status": "deferred",
+    "reason": "Criterion A2 is not met after its one permitted recheck: evidence fragments under two existing subagent IDs are not unified when a later event links those IDs. All recognized single-identity cases pass, but the alias case may still report completion. The fixed review sequence permits no second Grade recheck.",
+    "fix": "Unify existing subagent identity records while retaining both prior failed-state and error-message evidence."
+  },
+  "r1": {
+    "status": "deferred",
+    "reason": "The one failed-criterion recheck found this additional alias-unification case after the one authorized fix round. Preserve the finding and unmet A2 for operator review rather than claim completion.",
+    "fix": "Merge evidence records when an event links previously distinct subagent IDs, and add a regression fixture."
+  }
+}
