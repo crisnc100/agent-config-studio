@@ -1,6 +1,6 @@
 # Neon build refusals and permission observations
 
-One PR: tightly bounded build-outcome handling, conditional native sandbox/allow configuration, docs and observations. A saved Random exclusion, if needed to meet Cris’s setting request, is a discrete scope decision for the advisor before implementing. No benchmark or scheduler.
+Two independent PRs, one after another, approved by Cris on 2026-11-27. This PR contains the Neon build-outcome guard, per-task session grants, docs and probe observations. The next PR adds saved automatic-pick exclusions and enables the requested configuration through ACS after compatible support merges. The setting can ship and be undone independently of the guard. No benchmark or scheduler.
 
 Outcome: any denied action in a native Neon build prevents a clean completion; record what native normal/sandbox sessions actually can do without claiming isolation from a clean edit alone. Keep named Neon availability and the five-real-task eligibility gate.
 
@@ -16,3 +16,5 @@ A2 Any observed denied action makes native completed true impossible, exit4 with
 A3 Read-only agy argv/wall/token refusal and other vendors unchanged, tested offline. Default sandbox decision matches probe evidence; conditional settings rules narrowly scoped, no auto or bypass.
 A4 Random remains uniform. Neon stays nameable and out of automatic Random until5 real named tasks close review without replacement. Only ACS mutation routes for persistent config; no direct roles.json edits. If #123 cannot express saved exclusion, resolve scope before changing live config.
 A5 Fresh current-tip reviews closed, required tests/CIgreen, PR needs-human/unmerged. Handoff includes qualification ledger0/5 unless a real named task’s review proves otherwise, prior unresolved parked work retained.
+
+Scope decision, Cris 2026-11-27: keep this Neon PR small. Saved exclusions and the subsequent ACS configuration ship in a separate PR. A4 is tracked as that separate deliverable, not silently claimed by this implementation grade. Current source acceptance is A1-A3; A5 is the final delivery check. Until saved support is deployed, automatic task picks carry --exclude neon. Random weighting is unchanged.
