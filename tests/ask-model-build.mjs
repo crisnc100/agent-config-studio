@@ -88,7 +88,7 @@ const id = value('--model');
 // Kinds not listed stream a clean build: one edit and no refusal.
 const refused = ['denied', 'mismatch', 'empty', 'nonzero', 'bad-status', 'large-trace', 'complete-trace', 'ambiguous-trace', 'invalid-stream', 'unknown-event'].includes(kind);
   const events = [
-    { event: 'init', init: { model: kind === 'mismatch' ? 'different-model' : id } },
+    { event: 'init', init: { model: ['mismatch', 'clean-mismatch'].includes(kind) ? 'different-model' : id } },
     ...(!refused ? [
       { step_update: { step_index: 0, state: 'ACTIVE', tool_name: 'write_to_file', tool_info: {
         parameters: { TargetFile: './source.txt', CodeContent: diagnostic },
@@ -113,6 +113,9 @@ const refused = ['denied', 'mismatch', 'empty', 'nonzero', 'bad-status', 'large-
     ]),
     ...(['denied', 'mismatch', 'empty', 'nonzero', 'bad-status', 'subagent'].includes(kind) ? [{ step_update: {
       subagent_info: { subagents: [{ type_name: 'fixture worker', log_uri: 'file:///no-such-fixture/transcript.jsonl' }] },
+    } }] : []),
+    ...(kind === 'many-subagents' ? [{ step_update: {
+      subagent_info: { subagents: Array.from({ length: 70 }, (_, i) => ({ type_name: 'fixture worker', log_uri: 'file:///no-such-fixture/' + i + '/transcript.jsonl' })) },
     } }] : []),
     ...(kind === 'ambiguous-trace' ? [{ step_update: { step_index: 1, state: 'DONE', tool_name: 'read_file' } }] : []),
     ...(kind === 'unknown-event' ? [{ event: 'unclassified_update' }] : []),
@@ -300,7 +303,7 @@ test('build keeps denial evidence and omits completion after unsuccessful model 
   const f = fixture(t);
   for (const [kind, status, error] of [
     ['denied', 4, /^agy refused 5 of the builder's action\(s\), so the build is not complete\. Inspect the worktree/],
-    ['mismatch', 2, /different-model/],
+    ['mismatch', 4, new RegExp(`^agy refused 5 of the builder's action\\(s\\), so the build is not complete; asked for ${neon.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}, but agy reports it was asked for different-model — not its answer\\. Inspect the worktree`)],
     ['empty', 4, /empty answer/],
     ['nonzero', 4, /agy builder failed \(exit 7\)/],
     ['bad-status', 4, /did not report a successful result/],
@@ -343,6 +346,35 @@ test('build keeps denial evidence and omits completion after unsuccessful model 
   const plain = f.ask([], { json: false });
   assert.equal(plain.status, 0, plain.stderr);
   assert.equal(plain.stdout, 'fixture answer\n');
+});
+
+test('a model mismatch with no refusal still exits 2 and claims no completion', (t) => {
+  const f = fixture(t);
+  f.fakeAgy('clean-mismatch');
+  const r = f.ask([]);
+  assert.equal(r.status, 2, r.stderr);
+  const doc = JSON.parse(r.stdout);
+  assert.match(doc.error, /^asked for \S+, but agy reports it was asked for different-model — not its answer\. Inspect the worktree/);
+  assert.equal(doc.answer, null);
+  assert.ok(!Object.hasOwn(doc, 'build'));
+  assert.ok(!Object.hasOwn(doc, 'denied'));
+  assert.ok(!Object.hasOwn(doc, 'notes'));
+  assert.deepEqual(doc.actions, [{ tool: 'write_to_file', state: 'DONE', target: './source.txt' }]);
+  assert.doesNotMatch(r.stderr, /ask-model: agy: denied/);
+  assert.doesNotMatch(r.stderr, /was requested \(unverified\)/);
+});
+
+test('build notes stop at 64 in the receipt and on stderr', (t) => {
+  const f = fixture(t);
+  f.fakeAgy('many-subagents');
+  const r = f.ask([]);
+  assert.equal(r.status, 0, r.stderr);
+  const doc = JSON.parse(r.stdout);
+  assert.deepEqual(doc.build, { execution: 'native', completed: true });
+  const note = 'neon tried to start a subagent (fixture worker); its denied calls are unknown';
+  assert.deepEqual(doc.notes, [...Array(63).fill(note), '(7 more not listed)']);
+  const lines = r.stderr.split('\n').filter((line) => line.startsWith('ask-model: agy: '));
+  assert.deepEqual(lines, [...Array(63).fill(`ask-model: agy: ${note}`), 'ask-model: agy: (7 more not listed)']);
 });
 
 test('the build trace bounds the number of actions and target length', (t) => {

@@ -163,9 +163,14 @@ test('tool errors that are not refusals, quoted refusal text and an incomplete t
 test('model mismatch, a failed turn and an empty answer keep their errors, and still carry the denial', () => {
   const denial = [step({ step_index: 2, state: 'DENIED', step_type: 'tool', tool_name: 'run_command' })];
   const mismatch = build(stream(denial, { model: 'different-model' }));
-  assert.equal(mismatch.exit, 2);
-  assert.match(mismatch.error, /different-model — not its answer/);
+  assert.equal(mismatch.exit, 4);
+  assert.equal(mismatch.answer, undefined);
+  assert.equal(mismatch.error, `agy refused 1 of the builder's action(s), so the build is not complete; asked for ${NEON}, but agy reports it was asked for different-model — not its answer`);
   assert.deepEqual(mismatch.denied, ['run_command: denied']);
+  const mismatchOnly = build(stream([], { model: 'different-model' }));
+  assert.equal(mismatchOnly.exit, 2);
+  assert.equal(mismatchOnly.error, `asked for ${NEON}, but agy reports it was asked for different-model — not its answer`);
+  assert.deepEqual(mismatchOnly.denied, []);
   for (const [r, why] of [
     [stream(denial, { code: 7 }), /^agy builder failed \(exit 7\)$/],
     [stream(denial, { result: { status: 'ERROR' } }), /^agy builder did not report a successful result$/],
