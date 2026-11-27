@@ -120,3 +120,69 @@ Frozen `packs/review-gate/tests/review.test.mjs` untouched. No existing test cha
 - unverified: that agy accepts the wrapper's compiled argv. The new test pins it to the shape the root passed by hand.
 - unverified: whether git commands are refused under plain accept-edits. Call 1 shows no commit, not whether one was attempted.
 - The first real named task with grants is the live confirmation; a wrong rule fails loudly through the guard. Qualification stays 0/5.
+
+# Fix round: Grade A2 FAIL and combined review 2026-11-27-21-34-57-8892f1 (Opus builder)
+
+Scope: Grade A2's three cases and the blocking review findings f1, s1 (MEDIUM: earlier result denials) and f2 (MEDIUM: split updates). f3/s3 (notes) and f4 (refusal beside mismatch) are the review's LOW pre-existing entries for the same A2 cases, so they are fixed here too. Left as filed: the grade's LOW 10/100 approval/consent filename false positive and review s2 LOW 10/100 (unknown subagent refusals). No agy or other model was run (3/3 live calls used), and no review, grade, push or merge.
+
+## Change (`tools/ask-model.mjs`)
+
+- f1/s1: `agyBuildDenials` reads `denied_actions` from every result event. The last result still decides status and answer. Read-only calls still read only the last result.
+- f2: one evidence record per step identity (`conversation_id` + `step_index`) and per inline subagent identity (`conversation_id` or `log_uri`, linked when an update carries both). A field an update leaves out keeps its earlier value. ERROR/DENIED stays known after a later DONE. The tool name, or the subagent `type_name`, is the first valid one from any update, so a name that arrives after the refusal still labels the entry. This runs on raw steps, so the 64-action cap does not apply. The `actions` trace takes the kind `agyBuildDenials` found for each indexed step (`byStep`), so `denied` and `actions[].refusal` agree. There is no new IO and no transcript read.
+- A2 notes / f3 / s3: build notes go through the same 64-entry bound as `denied` (`agyBounded`: 63 kept plus `(N more not listed)`) on every build return (failure evidence, empty answer, success). The outer path writes only that bounded list to the receipt and stderr. Read-only notes are unchanged.
+- A2 mismatch / f4: a build with a refusal and a different `init.model` exits 4 with `agy refused N … not complete; asked for X, but agy reports it was asked for Y — not its answer`. It returns no `served` record. A mismatch with no refusal still exits 2, and so does a read-only mismatch.
+- `docs/neon-builder.md`: result events, split updates, refusal over mismatch, and the notes bound.
+
+Commits: `9c461ac` source + docs + new `tests/ask-model-build-evidence.mjs`; `cf00fc5` test-only (two changed assertions named in its message, two added end-to-end cases, SUITE registration).
+
+## Reproduced before, passing after
+
+New fixtures were run against the previous `tools/ask-model.mjs` (HEAD copy loaded beside the fixed one; restored, hash checked):
+
+| Block | Before (previous source) | After |
+| --- | --- | --- |
+| denied_actions on an earlier result, clean last result | exit 0 with answer (✖) | 4 |
+| step split updates (state first, message first, later DONE ×3, past the action cap, invalid tool name) | each exit 0 with answer, `denied: []` | each 4 with one sanitized entry |
+| inline subagent split by conversation_id, by log_uri, via linked ids | each exit 0 with answer | each 4 |
+| split updates that never pair failed state + refusal message (5 cases) | clean (✔) | clean (✔) |
+| 70 subagents: build notes | 70 (✖) | 64, last `(7 more not listed)` |
+| refusal + mismatch | 2 (✖) | 4, error names both |
+| end-to-end `mismatch` row (`ask-model-build.mjs`) | 2 (✖) | 4 |
+| end-to-end `many-subagents`: receipt notes and stderr lines | 70 each (✖) | 64 each |
+| end-to-end `clean-mismatch` | 2 (✔) | 2 (✔) |
+
+On the fixed source before the test-only commit, exactly the two old combined-case assertions failed (`actual: 4, expected: 2`), and nothing else did. The saved real stream `tests/fixtures/agy-subagent/stream.jsonl` gives the same build and read-only output before and after: answer, no denial, 1 note, same actions.
+
+## Commands and results (final tree, `cf00fc5`)
+
+| Command | Result |
+| --- | --- |
+| `node --check tools/ask-model.mjs` | OK |
+| `node tests/ask-model-build-evidence.mjs` | 6 pass, 0 fail |
+| `node tests/ask-model-build-denials.mjs` | 7 pass, 0 fail |
+| `node tests/ask-model-build.mjs` | 13 pass, 0 fail |
+| `node tests/ask-model-allow-command.mjs` | 9 pass, 0 fail |
+| `node tests/ask-model-agy.mjs` | 88 passed, 0 failed |
+| `node tests/ask-model.mjs` | 364 passed, 0 failed |
+| `node tests/vendor-prefixes.mjs` | 29 passed, 0 failed |
+| `node tests/guards.mjs` | 11 passed, 0 failed |
+| `node tests/setup-guards.mjs` | 110 passed, 0 failed |
+| `node tests/suite-coverage.mjs` | 33 passed, 0 failed |
+| `node tests/models.mjs` | 64 passed, 0 failed |
+| `node tests/build-builder-skill.mjs` | 38 pass, 0 fail |
+| `node packs/review-gate/tests/review.skills.test.mjs` | 26 pass, 0 fail |
+
+Every model-facing test ran on temp HOME and stubs. Frozen `packs/review-gate/tests/review.test.mjs` untouched. Build skills unchanged: they treat any non-zero exit as failure.
+
+## Sibling check
+
+- Every result event: the build denial scan (applied). Status/answer selection keeps the last result (not needed, by brief). Read-only denied list keeps the last result (not needed, read-only unchanged). Trace completeness already requires a single final result, so a second result leaves `actionsComplete` false (not needed; asserted). Failure returns carry the full evidence (applied).
+- Per-identity merge: steps and inline subagents in `agyBuildDenials` (applied). The `actions` trace consumes it through `byStep` (applied). Read-only per-update deny-rule list (not needed, read-only unchanged). The subagent notes dedupe by `log_uri` and classify nothing (not needed). Unindexed steps and subagent entries with neither id have no identity to merge on (not handled: it would need a new identity rule. In the saved real stream the id-less first subagent update is followed by updates that carry both ids).
+- Notes bound: all three build returns in `readAgy` (applied). The outer build receipt and stderr consume the bounded list (applied, end-to-end test). Read-only notes (not needed, by brief).
+- Refusal over mismatch: the mismatch return (applied). The other build failure returns were already 4 (not needed). Outer path `finish(signIn ? 4 : got.exit)` (applied, unchanged). Cancellation fails before the stream is read (not needed). `readAnswer` with `agyBuild` has no other caller (searched). Build skills branch on non-zero only, and the benchmark adapter checks `completed === true` (not needed). README exit list still accurate (not needed).
+
+## Residual unknowns
+
+- The three live probe streams are not in this worktree, so their offline replay through the new guard was not rerun here. The root holds them.
+- unverified: whether agy 1.5.14 ever emits more than one result event, or splits a step's state and error message across updates. Both shapes are synthetic.
+- Subagent refusals inside unread transcripts stay unknown (s2, filed).
