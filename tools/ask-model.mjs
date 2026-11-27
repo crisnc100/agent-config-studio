@@ -1596,6 +1596,57 @@ function grokXRecord(sessionId, cwd, grokHome) {
 
 const agyToolName = (value) => typeof value === 'string' && /^[a-z][a-z0-9_]{0,63}$/i.test(value);
 
+// Only a step's state and its tool error are read: answer text, tool output and subagent prompts can quote these
+// phrases without anything having been refused.
+function agyRefusal(state, message) {
+  if (state !== 'ERROR' && state !== 'DENIED') return null;
+  const text = typeof message === 'string' ? message : '';
+  return /deny rule/i.test(text) ? 'deny-rule'
+    : /approval|consent/i.test(text) ? 'approval-required'
+      : /EACCES|EPERM|permission denied|operation not permitted/i.test(text) ? 'permission-denied'
+        : state === 'DENIED' || /user denied|denied permission/i.test(text) ? 'denied'
+          : /ENOENT|no such file|not found/i.test(text) ? 'not-found' : null;
+}
+
+const AGY_DENIALS = { 'deny-rule': 'blocked by deny rule', 'approval-required': 'needed an approval', 'permission-denied': 'permission denied', denied: 'denied' };
+const AGY_DENIED_LIMIT = 64;
+
+/**
+ * Every refused action a build's stream shows, from the raw steps rather than the bounded `actions` trace: a later
+ * DONE update, the action cap or a tool name the trace can't report never hides a refusal seen earlier. A
+ * subagent's own steps are in its transcript, which a build does not read, so its refusals are found only when the
+ * stream itself carries them.
+ */
+function agyBuildDenials(steps, result) {
+  const found = new Map(), tools = new Map();
+  const add = (key, entry) => { if (!found.has(key)) found.set(key, entry); };
+  for (const step of steps) {
+    const indexed = Number.isSafeInteger(step.step_index) && step.step_index >= 0;
+    const key = indexed ? JSON.stringify([step.conversation_id ?? null, step.step_index]) : Symbol();
+    const tool = step.tool_name ?? step.tool_info?.name ?? tools.get(key);
+    if (indexed && !tools.has(key) && tool !== undefined) tools.set(key, tool);
+    const refusal = agyRefusal(step.state, step.tool_info?.error?.message);
+    if (AGY_DENIALS[refusal]) add(key, `${agyToolName(tool) ? tool : '(unnamed)'}: ${AGY_DENIALS[refusal]}`);
+    for (const s of Array.isArray(step.subagent_info?.subagents) ? step.subagent_info.subagents : []) {
+      if (!isObject(s)) continue;
+      const own = agyRefusal(s.state ?? s.status, isObject(s.error) ? s.error.message : s.error);
+      const nested = AGY_DENIALS[own] ? own : Array.isArray(s.denied_actions) && s.denied_actions.length ? 'approval-required' : null;
+      if (!nested) continue;
+      const id = [s.conversation_id, s.log_uri].find((v) => typeof v === 'string');
+      const name = typeof s.type_name === 'string' && /^[a-z][a-z0-9_ -]{0,63}$/i.test(s.type_name) ? ` (${s.type_name})` : '';
+      add(id === undefined ? Symbol() : JSON.stringify(['subagent', id]), `subagent${name}: ${AGY_DENIALS[nested]}`);
+    }
+  }
+  const approvals = Array.isArray(result?.denied_actions) ? result.denied_actions : isObject(result?.denied_actions) ? [result.denied_actions] : [];
+  for (const d of approvals) {
+    const action = typeof d?.action === 'string' && /^[a-z][a-z0-9_ -]{0,63}$/i.test(d.action) ? d.action : '(unnamed)';
+    add(Symbol(), `${action}: needed an approval print mode cannot give`);
+  }
+  const all = [...found.values()];
+  const listed = all.length > AGY_DENIED_LIMIT ? [...all.slice(0, AGY_DENIED_LIMIT - 1), `(${all.length - AGY_DENIED_LIMIT + 1} more not listed)`] : all;
+  return { count: all.length, listed };
+}
+
 function agyBuildActions(steps, complete) {
   const actions = new Map();
   let actionsTruncated = false;
@@ -1641,14 +1692,11 @@ function agyBuildActions(steps, complete) {
       if (targets.size > 1 || (action.target && targets.size && !targets.has(action.target))) complete = false;
       if (targets.size === 1) [action.target] = targets;
     }
-    if (state === 'ERROR' || state === 'DENIED') {
-      const error = String(info?.error?.message ?? '');
-      action.refusal = /deny rule/i.test(error) ? 'deny-rule'
-        : /approval|consent/i.test(error) ? 'approval-required'
-          : /EACCES|EPERM|permission denied|operation not permitted/i.test(error) ? 'permission-denied'
-            : /ENOENT|no such file|not found/i.test(error) ? 'not-found'
-              : state === 'DENIED' ? 'denied' : previous?.refusal ?? 'tool-error';
-    } else delete action.refusal;
+    // A refusal stays on its action through later updates, as it does in agyBuildDenials; other errors do not.
+    if (!AGY_DENIALS[previous?.refusal]) {
+      if (state === 'ERROR' || state === 'DENIED') action.refusal = agyRefusal(state, info?.error?.message) ?? previous?.refusal ?? 'tool-error';
+      else delete action.refusal;
+    }
     actions.set(key, action);
   }
   const reported = [...actions.values()];
@@ -1660,7 +1708,8 @@ function agyBuildActions(steps, complete) {
  * agy's answer from its stream-json events: the last response turn's text (else the result event's response). agy reports no model that answered, only
  * init.model, the echo of what it was asked for, so that is kept as requested and unverified (a different echo still
  * refuses, exit 2). A denied tool call does not fail agy's turn (status SUCCESS, exit 0); it shows as a tool step that
- * ended ERROR on a deny rule, and with no answer beside it the call failed.
+ * ended ERROR on a deny rule, and with no answer beside it the call failed. A build fails on any refused action, answer
+ * or not (agyBuildDenials).
  */
 function readAgy(id, r, family, build) {
   const events = [];
@@ -1672,16 +1721,13 @@ function readAgy(id, r, family, build) {
   const init = events.find((e) => e?.event === 'init')?.init;
   const result = events.findLast((e) => e?.event === 'result')?.result;
   const steps = events.map((e) => e?.step_update).filter(isObject);
-  const denied = steps.filter((u) => u.state === 'ERROR' && /deny rule/i.test(String(u.tool_info?.error?.message ?? '')))
-    .map((u) => build ? `${agyToolName(u.tool_name) ? u.tool_name : '(unnamed)'}: blocked by deny rule`
-      : `${u.tool_name}: ${String(u.tool_info.error.message).slice(0, 300)}`);
+  const buildDenials = build ? agyBuildDenials(steps, result) : null;
+  const denied = build ? buildDenials.listed : steps.filter((u) => u.state === 'ERROR' && /deny rule/i.test(String(u.tool_info?.error?.message ?? '')))
+    .map((u) => `${u.tool_name}: ${String(u.tool_info.error.message).slice(0, 300)}`);
   // Actions that needed an approval print mode cannot give (a read outside the workspace, say): agy lists them in
   // denied_actions, and the turn still ends SUCCESS.
-  if (Array.isArray(result?.denied_actions)) {
-    for (const d of result.denied_actions) {
-      const action = build && (typeof d?.action !== 'string' || !/^[a-z][a-z0-9_ -]{0,63}$/i.test(d.action)) ? null : d?.action;
-      denied.push(`${action ?? '(unnamed)'}: needed an approval print mode cannot give`);
-    }
+  if (!build && Array.isArray(result?.denied_actions)) {
+    for (const d of result.denied_actions) denied.push(`${d?.action ?? '(unnamed)'}: needed an approval print mode cannot give`);
   }
   const sub = agySubagentDenials(steps, undefined, family, { includeTranscripts: !build });
   denied.push(...sub.denied);
@@ -1711,7 +1757,11 @@ function readAgy(id, r, family, build) {
   for (const u of steps) if (u.step_type === 'agent_response' && typeof u.text_delta === 'string') turns.set(u.step_index, (turns.get(u.step_index) ?? '') + u.text_delta);
   const text = [...turns.entries()].sort((x, y) => y[0] - x[0]).map(([, t]) => t).find((t) => t.trim()) ?? result.response;
   if (typeof text !== 'string' || !text.trim()) {
-    return { exit: 4, error: `agy returned an empty answer${denied.length ? ` after ${denied.length} denied tool call(s): ${denied.join('; ')}` : ''}`, served, denied, notes: sub.notes, ...trace };
+    return { exit: 4, error: `agy returned an empty answer${denied.length ? ` after ${build ? buildDenials.count : denied.length} denied tool call(s): ${denied.join('; ')}` : ''}`, served, denied, notes: sub.notes, ...trace };
+  }
+  // A refused action means the build did not do what it was asked, whatever its answer says.
+  if (build && buildDenials.count) {
+    return { exit: 4, error: `agy refused ${buildDenials.count} of the builder's action(s), so the build is not complete`, served, ...evidence };
   }
   return { answer: text, served, denied, notes: sub.notes, ...trace };
 }

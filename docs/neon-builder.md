@@ -26,7 +26,7 @@ The worktree is where the build is pointed, not an enforced boundary: agy can re
 
 ## Results
 
-Success exits 0 and `--json` carries `build: { execution: "native", completed: true }` and `served: { verified: false }`. Agy reports only the model it was asked for, so the model's identity is never verified. There is no `published` claim. `changed` is `null`: `ask-model` does not audit what the build touched, so read `git status` and the diff yourself.
+Success exits 0 and `--json` carries `build: { execution: "native", completed: true }` and `served: { verified: false }`. A build in which agy refused any action never succeeds (see below). Agy reports only the model it was asked for, so the model's identity is never verified. There is no `published` claim. `changed` is `null`: `ask-model` does not audit what the build touched, so read `git status` and the diff yourself.
 
 After the call a private per-call log must be a readable regular file you own, and must not say agy fell back to a plaintext token file. A failure there, or a token file left behind, fails the build even if the answer was fine. The log is deleted afterwards; read-only calls keep theirs under `~/.agent-config-studio/logs/agy/`.
 
@@ -34,9 +34,13 @@ After the call a private per-call log must be a readable regular file you own, a
 
 A signal sent to `ask-model` (INT, TERM or HUP) is remembered and kills agy's process group. The call then fails with exit 4 even if agy exits 0, and no completion is claimed. Edits made before an error or cancellation stay in the worktree; there is no rollback. Inspect the worktree before retrying.
 
-`--json` also carries bounded `actions`, `denied` and `notes` parsed from agy's stream. They are diagnostics, not proof of isolation.
+A refused action fails the build with exit 4, `answer: null` and no `build`, even when agy's turn ends SUCCESS with an answer. A refusal is a tool step that ends `DENIED`, or `ERROR` on a deny rule, a missing approval or consent, a user who denied permission, or a permission error (EACCES, EPERM, permission denied, operation not permitted); or an entry in agy's `denied_actions`. A later update or result never clears an earlier refusal. Other tool errors, such as a file not found or a failed command, do not fail the build.
+
+`--json` also carries bounded `actions`, `denied` and `notes` parsed from agy's stream. Each `denied` entry names the tool and the kind of refusal, never agy's message, and the list stops at 64 entries. They are diagnostics, not proof of isolation.
 
 ## Limits
+
+Refusals are read from agy's stream only. A subagent's own steps are in a transcript a build does not read, so its refusals are unknown unless the stream carries them, and a `notes` entry says the subagent ran. A shell command that fails inside a step agy reports as `DONE` is not a refusal, whatever its output says. Read the diff and the test output yourself.
 
 This route runs the family you give to `ask-model --family`. A direct `ask-model --role builder` call uses the first unpaused family in role order. The build skills use `model-id --pick builder --json` to apply the configured task selection strategy.
 
