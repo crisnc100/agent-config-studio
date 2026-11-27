@@ -99,11 +99,32 @@ import { EFFORTS, VENDOR_PREFIXES, loadRegistry, resolveModel, vendorOf } from '
 import { familyEffort, pauseLine, resolveFlavor, resolveRole } from '../lib/roles.js';
 
 const SELF = fileURLToPath(import.meta.url);
-const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools | --x-search | --build] [--json] [--cwd <dir>]'
+const USAGE = 'usage: ask-model (--role <role> [--second] | --family <family> [--effort-from <role>[,<role>…]]) [--effort <e>] --prompt-file <path> [--schema <file.json>] [--investigate | --no-tools | --min-tools | --x-search | --build [--allow-command <command>]…] [--json] [--cwd <dir>]'
   + '\n  --x-search: grok only; leaves x_keyword_search, x_semantic_search, x_user_search and x_thread_fetch; open_page and open_page_with_find '
   + 'cannot be disallowed by name; each run is checked afterwards against grok\'s session record'
-  + '\n  --build: uses the tested agy version with normal Antigravity permissions; requires --family or --role builder and an explicit canonical Git worktree root in --cwd';
+  + '\n  --build: uses the tested agy version with normal Antigravity permissions; requires --family or --role builder and an explicit canonical Git worktree root in --cwd'
+  + '\n  --allow-command: --build only, up to 16 times; gives agy a session allow rule for that one command string (letters, digits, spaces and _ - . / : = @ , + " \' only)';
 const VALUE_FLAGS = { '--role': 'role', '--family': 'family', '--effort': 'effort', '--effort-from': 'effortFrom', '--prompt-file': 'promptFile', '--schema': 'schemaFile', '--cwd': 'cwd' };
+// --allow-command strings become agy rules, command(<string>), for one build. The live probes saw such a rule let through
+// the one command written in it; whether agy matches a rule exactly or as a prefix is unverified. So the set leaves out
+// what would chain, redirect, expand or glob a command, and the parentheses that would end the rule early.
+const ALLOW_COMMAND_RE = /^[A-Za-z0-9 _\-.\/:=@,+"']+$/;
+const ALLOW_COMMAND_MAX = 16;
+const ALLOW_COMMAND_LENGTH = 512;
+
+/** Why a list of --allow-command strings cannot become agy rules, or null. */
+function allowCommandsProblem(list) {
+  if (!Array.isArray(list)) return '--allow-command takes a list of command strings';
+  if (list.length > ALLOW_COMMAND_MAX) return `--allow-command is given ${list.length} times; at most ${ALLOW_COMMAND_MAX} commands`;
+  for (const [i, c] of list.entries()) {
+    if (typeof c !== 'string') return '--allow-command takes a command string';
+    if (!c.length || c.length > ALLOW_COMMAND_LENGTH) return `--allow-command takes 1 to ${ALLOW_COMMAND_LENGTH} characters, not ${c.length}`;
+    if (!ALLOW_COMMAND_RE.test(c)) return `--allow-command ${JSON.stringify(c)} holds a character other than letters, digits, spaces and _ - . / : = @ , + " '`;
+    if (c !== c.trim()) return `--allow-command ${JSON.stringify(c)} starts or ends with a space`;
+    if (list.indexOf(c) !== i) return `--allow-command ${JSON.stringify(c)} is given twice`;
+  }
+  return null;
+}
 
 // What each CLI may use. Claude and grok are read-only by these allowlists alone
 // (their plan modes and denylists were observed to still write); codex by its sandbox.
@@ -574,7 +595,8 @@ const VENDORS = ['claude', 'codex', 'grok', 'agy'];
 const unwired = (vendor) => `ask-model has no ${vendor} CLI wiring (it runs ${VENDORS.join(', ')})`;
 
 /** The argv for one call. `mcpOff` is codex's overrides that switch its MCP servers off (codexMcpOff). */
-function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = null, logFile = null }) {
+function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = null, logFile = null, allowCommands = [] }) {
+  if (allowCommands.length && (vendor !== 'agy' || mode !== 'build')) throw new Error('--allow-command is only for an agy --build');
   // The structured-output flags review.mjs passes: the schema's JSON for claude and grok, its file for codex.
   const json = schema ? ['--json-schema', JSON.stringify(schema.doc)] : [];
   if (vendor === 'claude') {
@@ -596,11 +618,15 @@ function argvFor(vendor, { id, effort, prompt, cwd, mode, mcpOff = [], schema = 
   if (vendor === 'agy') {
     if (mode !== 'read-only' && mode !== 'build') throw new Error(`agy runs read-only only, not ${mode}`);
     if (!logFile) throw new Error('agy needs a --log-file path for the call');
+    const badAllow = allowCommandsProblem(allowCommands);
+    if (badAllow) throw new Error(badAllow);
+    // A build's allow rules go in --settings for this call alone; with none, no --settings at all.
+    const allow = allowCommands.length ? ['--settings', JSON.stringify({ permissions: { allow: allowCommands.map((c) => `command(${c})`) } })] : [];
     // stream-json for its init event (the model agy was asked for) and each tool step (a denied one ends ERROR);
     // --disable-slash-commands so a prompt starting with / is text; --log-file so the call's own log is kept.
     return ['-p', prompt, '--model', id, ...(effort ? ['--effort', effort] : []), '--output-format', 'stream-json',
       '--print-timeout', AGY_PRINT_TIMEOUT, '--disable-slash-commands',
-      ...(mode === 'build' ? ['--mode', 'accept-edits'] : ['--settings', JSON.stringify(AGY_SETTINGS)]),
+      ...(mode === 'build' ? ['--mode', 'accept-edits', ...allow] : ['--settings', JSON.stringify(AGY_SETTINGS)]),
       '--log-file', logFile, ...json];
   }
   if (vendor !== 'grok') throw new Error(unwired(vendor));
@@ -1090,6 +1116,13 @@ function parse(argv) {
     if (a === '--no-tools') { o.noTools = true; continue; }
     if (a === '--min-tools') { o.minTools = true; continue; }
     if (a === '--x-search') { o.xSearch = true; continue; }
+    // Repeatable, so it is read before the one-value flags, which refuse a second use.
+    if (a === '--allow-command') {
+      const v = argv[++i];
+      if (v === undefined || v.startsWith('-')) return { error: '--allow-command needs a value' };
+      (o.allowCommands ??= []).push(v);
+      continue;
+    }
     const key = VALUE_FLAGS[a];
     if (!key) return { error: `unexpected argument ${JSON.stringify(a)}` };
     const v = argv[++i];
@@ -1106,6 +1139,11 @@ function parse(argv) {
     if (o.effortFrom.some((n) => !n)) return { error: '--effort-from takes role names separated by commas' };
   }
   if (o.promptFile === undefined) return { error: '--prompt-file is required' };
+  if (o.allowCommands) {
+    if (!o.build) return { error: '--allow-command is only for --build' };
+    const bad = allowCommandsProblem(o.allowCommands);
+    if (bad) return { error: bad };
+  }
   if (o.build) {
     if (o.cwd === undefined) return { error: '--build requires an explicit --cwd at the canonical Git worktree root' };
     if (o.role !== undefined && o.role !== 'builder') return { error: '--build only accepts the builder role' };
@@ -1968,8 +2006,15 @@ async function main(argv) {
     try { agyTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acs-agy-build-')); }
     catch { result.error = 'a private log directory could not be created, so agy was not run'; return finish(4); }
     logFile = path.join(agyTmp, 'agy.log');
+    // Each rule names one string, and a variant of it may not match, so the model is told the strings verbatim. Other
+    // commands are not said to be refused: normal Antigravity permissions still decide those.
+    const granted = o.allowCommands?.length
+      ? 'This build has a session rule for each command below. When you run one, run it exactly as written, with nothing '
+        + 'added, removed or changed. A different command may be refused, and any refused action fails the build.\n'
+        + o.allowCommands.map((c) => `- \`${c}\``).join('\n') + '\n\n'
+      : '';
     prompt = 'You are the implementer for this task. Do not invoke other models, delegate, or run reviews or grades. '
-      + 'Do not push, open a pull request, or merge. Follow the task and report what you changed and checked.\n\n' + prompt;
+      + 'Do not push, open a pull request, or merge. Follow the task and report what you changed and checked.\n\n' + granted + prompt;
   } else if (vendor === 'agy') {
     // The workspace and home first: they need no agy process, and an unprobed agy could load what they would refuse.
     const workspace = agyWorkspaceFiles(cwd);
@@ -2050,7 +2095,7 @@ async function main(argv) {
   // A role name is a watch kind as it stands; a family names no job, so its line says ask.
   startWatch(o.role !== undefined && /^[a-z][a-z0-9-]{0,31}$/.test(o.role) ? o.role : 'ask');
   let args;
-  try { args = argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff, schema, logFile }); } catch (e) { result.error = `${e.message} — ${vendor} was not run`; return finish(4); }
+  try { args = argvFor(vendor, { ...m, prompt, cwd, mode, mcpOff, schema, logFile, allowCommands: o.allowCommands ?? [] }); } catch (e) { result.error = `${e.message} — ${vendor} was not run`; return finish(4); }
   const r = wall ? await run(SANDBOX_EXEC, agyWall(wall, [bin, ...args]), cwd, env)
     : await run(bin, args, cwd, env, { nativeBuild: o.build });
   // A call grok refused for want of approval leaves only this line, and grok still exits 0.
@@ -2123,7 +2168,7 @@ async function main(argv) {
   return finish(got.exit ?? 0);
 }
 
-export { AGY_ENV, AGY_TOKEN_FIX, AGY_TOKEN_PATH, AGY_WALL, SANDBOX_EXEC, agyAfterCall, agyReadRoot, agySubagentDenials, agyTokenLeft, agyWall, agyWallCanary, agyWallParams, agyWallProblem, argvFor, readAnswer, sandboxProblem };
+export { AGY_ENV, AGY_TOKEN_FIX, AGY_TOKEN_PATH, AGY_WALL, SANDBOX_EXEC, agyAfterCall, agyReadRoot, agySubagentDenials, agyTokenLeft, agyWall, agyWallCanary, agyWallParams, agyWallProblem, allowCommandsProblem, argvFor, readAnswer, sandboxProblem };
 
 /**
  * For `model-id --install`, after it has copied the resolver: this file beside

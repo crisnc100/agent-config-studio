@@ -20,9 +20,25 @@ effort on every build call. Both phases and fixes use the same choice.
 
 ## What runs
 
-agy runs with `--mode accept-edits`, your normal HOME, its normal Antigravity permissions and configuration, the resolved model and effort, `stream-json` output and a finite print timeout. The wrapper adds no private source copy, OS sandbox, broker or permission override, and never passes `--dangerously-skip-permissions`. Normal permission prompts still apply.
+agy runs with `--mode accept-edits`, your normal HOME, its normal Antigravity permissions and configuration, the resolved model and effort, `stream-json` output and a finite print timeout. The wrapper adds no private source copy, OS sandbox or broker, and no permission rule except the allow rules `--allow-command` asks for (below). It never passes `--dangerously-skip-permissions`, `--sandbox` or another `--mode`. Normal permission prompts still apply.
 
 The worktree is where the build is pointed, not an enforced boundary: agy can reach whatever its own permissions allow. The wrapper prefixes the prompt with instructions not to call other models, run reviews or grades, push, open a PR or merge. Those are instructions, not a security boundary.
+
+## Granting the task's commands
+
+Normal permissions can refuse a test or git command, and a refused action fails the build. `--allow-command <command>`, given up to 16 times, passes agy one session allow rule per string:
+
+```sh
+ask-model --family neon --prompt-file brief.md --cwd <worktree-root> --build --json \
+  --allow-command 'node --test tests/phase.test.mjs' --allow-command 'git add -A' \
+  --allow-command 'git commit -m "Phase 1: parse the config file"'
+```
+
+- The strings become `--settings '{"permissions":{"allow":["command(<string>)",…]}}'`, in the order given, for that call only. Nothing is saved, and no deny rule or other key is added. Without the flag there is no `--settings` argument.
+- Each string is one line of 1 to 512 characters, using only letters, digits, spaces and `_ - . / : = @ , + " '`, with no leading or trailing space and no repeats. That leaves out globs, chaining, pipes, redirection, expansion, escapes and parentheses. Any other string, more than 16, the flag without `--build`, or a family agy does not run exits 64 before agy is started. Strings come only from the command line; no file is read for them.
+- The prompt lists the strings verbatim after the preamble and tells the builder to run each exactly as written. Other commands stay under normal Antigravity permissions: the wrapper neither grants nor refuses them.
+- A rule names one string. In live probes a rule let through the command written in it; whether agy matches a rule exactly or as a prefix is unverified. A grant is not isolation: a granted test runs as you, with your access.
+- A refused action still fails the build. `--json` does not list the grants or the commands agy ran.
 
 ## Results
 
@@ -41,6 +57,8 @@ A refused action fails the build with exit 4, `answer: null` and no `build`, eve
 ## Limits
 
 Refusals are read from agy's stream only. A subagent's own steps are in a transcript a build does not read, so its refusals are unknown unless the stream carries them, and a `notes` entry says the subagent ran. A shell command that fails inside a step agy reports as `DONE` is not a refusal, whatever its output says. Read the diff and the test output yourself.
+
+Builds do not use agy's `--sandbox`. In a probe with it, shell commands still wrote and read temporary files beside the worktree, and a web fetch failed only at DNS (`ENOTFOUND`), which shows no general network boundary.
 
 This route runs the family you give to `ask-model --family`. A direct `ask-model --role builder` call uses the first unpaused family in role order. The build skills use `model-id --pick builder --json` to apply the configured task selection strategy.
 
