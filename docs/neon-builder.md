@@ -58,7 +58,9 @@ A refused action fails the build with exit 4, `answer: null` and no `build`, eve
 
 Refusals are read from agy's stream only. A subagent's own steps are in a transcript a build does not read, so its refusals are unknown unless the stream carries them, and a `notes` entry says the subagent ran. A shell command that fails inside a step agy reports as `DONE` is not a refusal, whatever its output says. Read the diff and the test output yourself.
 
-Builds do not use agy's `--sandbox`. In a probe with it, shell commands still wrote and read temporary files beside the worktree, and a web fetch failed only at DNS (`ENOTFOUND`), which shows no general network boundary.
+Builds do not use agy's `--sandbox`. In a probe with it, shell commands still wrote and read temporary files beside the worktree. The example.com fetch failed with `ENOTFOUND`; this observation does not establish a general network boundary.
+
+A native file-tool read of the outside canary was refused in both scoped probes, ending those turns. Native outside writes and native URL fetches were not attempted. All three live sessions used inert fixture files and recorded permission observations.
 
 This route runs the family you give to `ask-model --family`. A direct `ask-model --role builder` call uses the first unpaused family in role order. The build skills use `model-id --pick builder --json` to apply the configured task selection strategy.
 

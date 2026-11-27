@@ -1,0 +1,68 @@
+[
+  {
+    "behavior": "Per-task native command grants: repeatable build-only --allow-command, validated and compiled to per-call permissions.allow command() rules, listed in the builder prompt",
+    "files": ["tools/ask-model.mjs"],
+    "docs": [
+      {
+        "path": "docs/neon-builder.md",
+        "claims": [
+          { "claim": "Up to 16 strings, 1 to 512 characters, closed character set, no leading/trailing space, no repeats", "at": "tools/ask-model.mjs:111" },
+          { "claim": "Limits and checks: 16 strings, 512 characters, duplicates and edge spaces rejected", "at": "tools/ask-model.mjs:116" },
+          { "claim": "Flag without --build, or a bad list, is a usage error before agy starts", "at": "tools/ask-model.mjs:1142" },
+          { "claim": "Strings come only from the command line, repeatable", "at": "tools/ask-model.mjs:1120" },
+          { "claim": "Strings become --settings {permissions:{allow:[command(<s>)]}} in order given; no --settings without the flag; no deny rule added", "at": "tools/ask-model.mjs:624" },
+          { "claim": "A non-agy family with --build is a usage error", "at": "tools/ask-model.mjs:1975" },
+          { "claim": "Prompt lists the strings verbatim, says run exactly as written; other commands not granted or refused by the wrapper", "at": "tools/ask-model.mjs:2039" },
+          { "claim": "In live probes a rule let through the command written in it; exact vs prefix matching unverified", "at": "builds/neon-build-refusals/probe-observations.json:53" },
+          { "claim": "Settings shape used in the probes", "at": "builds/neon-build-refusals/probe-observations.json:118" },
+          { "claim": "agy runs --mode accept-edits with a finite print timeout and stream-json; no --sandbox or skip-permissions on the build path", "at": "tools/ask-model.mjs:627" },
+          { "claim": "--json carries no receipt field for grants", "at": "tools/ask-model.mjs:2160" }
+        ]
+      },
+      {
+        "path": "README.md",
+        "claims": [
+          { "claim": "--build is opt-in, normal Antigravity permissions, points to docs/neon-builder.md", "at": "README.md:1006" }
+        ]
+      }
+    ]
+  },
+  {
+    "behavior": "Sticky native refusal evidence across every result event and merged step/subagent updates; exit 4 with no answer or build; bounded sanitized denied and notes (64) for native builds; denial plus model mismatch exits 4, mismatch alone 2",
+    "files": ["tools/ask-model.mjs"],
+    "docs": [
+      {
+        "path": "docs/neon-builder.md",
+        "claims": [
+          { "claim": "Refusal kinds: DENIED, or ERROR on deny rule / approval / consent / user denied / EACCES etc.; other errors such as not found do not fail", "at": "tools/ask-model.mjs:1639" },
+          { "claim": "Failed state and error message in separate updates count together; a refusal is never cleared by later updates", "at": "tools/ask-model.mjs:1671" },
+          { "claim": "denied_actions on any result event counts as a refusal", "at": "tools/ask-model.mjs:1700" },
+          { "claim": "Subagent refusals counted only when the stream carries them", "at": "tools/ask-model.mjs:1687" },
+          { "claim": "denied and notes capped at 64 with a count of the rest, for native builds", "at": "tools/ask-model.mjs:1651" },
+          { "claim": "denied entries name the tool and refusal kind, never agy's message", "at": "tools/ask-model.mjs:1676" },
+          { "claim": "Build does not read subagent transcripts; notes say a subagent was started", "at": "tools/ask-model.mjs:1852" },
+          { "claim": "Refusal exits 4 with no answer; with a model mismatch exits 4 naming both; mismatch alone exits 2", "at": "tools/ask-model.mjs:1815" },
+          { "claim": "A refusal fails the build even when the turn ends SUCCESS with an answer", "at": "tools/ask-model.mjs:1831" },
+          { "claim": "Build result emitted only on success; failure result has answer null and no build", "at": "tools/ask-model.mjs:2156" },
+          { "claim": "actions trace is bounded to 64 and keeps a refusal across later updates", "at": "tools/ask-model.mjs:1731" }
+        ]
+      }
+    ]
+  },
+  {
+    "behavior": "Measured native versus --sandbox permission observations and unverified served model",
+    "files": ["tools/ask-model.mjs"],
+    "docs": [
+      {
+        "path": "docs/neon-builder.md",
+        "claims": [
+          { "claim": "Served model never verified; success reports served.verified false", "at": "tools/ask-model.mjs:2161" },
+          { "claim": "Sandbox probe: temporary sibling write and read reachable, fetch failed with ENOTFOUND", "at": "builds/neon-build-refusals/probe-observations.json:80" },
+          { "claim": "Normal probe: terminal fetch status 200 and sibling reachable", "at": "builds/neon-build-refusals/probe-observations.json:47" },
+          { "claim": "Native canary read refused; later native write and URL fetch unattempted; three live calls used", "at": "builds/neon-build-refusals/probe-observations.json:103" },
+          { "claim": "Probes qualify nothing and show no universal network boundary", "at": "builds/neon-build-refusals/probe-observations.json:107" }
+        ]
+      }
+    ]
+  }
+]
