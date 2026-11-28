@@ -26,7 +26,7 @@
               "at": "tools/ask-model.mjs:1671"
             },
             {
-              "claim": "Refusals are recognized from step state and error-message wording only; other errors such as not found do not fail the build",
+              "claim": "The tool-step matcher uses state and error wording; an ERROR whose message contains a matched word such as approval counts as a refusal.",
               "at": "tools/ask-model.mjs:1639"
             }
           ]

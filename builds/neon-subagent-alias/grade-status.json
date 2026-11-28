@@ -1,0 +1,14 @@
+{
+  "c1": {
+    "status": "fixed",
+    "response": "real"
+  },
+  "c2": {
+    "status": "fixed",
+    "response": "real"
+  },
+  "f3": {
+    "status": "carried",
+    "reason": "Finished-tip PR review2026-11-28-17-35-56-80a32d lists and checks this phase finding after the passing A2/A3 recheck."
+  }
+}

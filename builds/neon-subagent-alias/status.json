@@ -1,0 +1,8 @@
+{
+  "x1": {
+    "status": "fixed",
+    "response": "real",
+    "reason": "Corrected only the docs-table scope qualifier to tool-step matcher; actual docs had already been clarified. Native result/inline denied_actions remain recognized independently. No source, test or doc prose changed after the check.",
+    "evidence": "builds/neon-subagent-alias/docs-table.json cites tools/ask-model.mjs:1639 solely for agyRefusal; the current doc paragraph says For tool steps."
+  }
+}
