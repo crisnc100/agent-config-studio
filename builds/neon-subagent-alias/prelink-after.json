@@ -1,0 +1,18 @@
+[
+  {
+    "clear": "",
+    "exit": 4,
+    "answerPresent": false,
+    "denied": [
+      "subagent (worker): permission denied"
+    ]
+  },
+  {
+    "clear": "command exited 1",
+    "exit": 4,
+    "answerPresent": false,
+    "denied": [
+      "subagent (worker): permission denied"
+    ]
+  }
+]
