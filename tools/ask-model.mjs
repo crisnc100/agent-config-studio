@@ -1678,7 +1678,7 @@ function agyBuildDenials(steps, results) {
   // agy names a subagent by conversation_id and log_uri, not always both in one update.
   const subagentIds = (s) => [s.conversation_id, s.log_uri].filter((v) => typeof v === 'string').map((v) => JSON.stringify(['subagent', v]));
   // Ids that any update names together are one subagent for the whole stream, grouped before any update is classified,
-  // so its updates fold in stream order exactly as they would under one id: where the linking update falls changes
+  // so its updates fold in stream order exactly as they would under one id: where an identity-only link falls changes
   // nothing. The smaller group joins the larger, so linking many ids stays n log n.
   const group = new Map();
   for (const step of steps) {
