@@ -1,0 +1,37 @@
+{
+  "rows": [
+    {
+      "behavior": "Subagent ids named together anywhere in the stream are grouped before classification; each group's updates fold in original stream order and the subagent is listed once",
+      "files": [
+        "tools/ask-model.mjs"
+      ],
+      "docs": [
+        {
+          "path": "docs/neon-builder.md",
+          "claims": [
+            {
+              "claim": "A subagent may be named by conversation_id or log_uri",
+              "at": "tools/ask-model.mjs:1679"
+            },
+            {
+              "claim": "Once any update names both ids, every update under either id belongs to one subagent, wherever the linking update falls",
+              "at": "tools/ask-model.mjs:1684"
+            },
+            {
+              "claim": "Updates are folded in stream order through the same classifier, and the subagent is listed once",
+              "at": "tools/ask-model.mjs:1706"
+            },
+            {
+              "claim": "A failed state and an error message sent in separate updates count together; a refusal is not cleared later",
+              "at": "tools/ask-model.mjs:1671"
+            },
+            {
+              "claim": "The tool-step matcher uses state and error wording; an ERROR whose message contains a matched word such as approval counts as a refusal.",
+              "at": "tools/ask-model.mjs:1639"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

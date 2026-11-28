@@ -1,0 +1,19 @@
+{
+  "baseline": "1b05cc9c885597df7c0c86781fc21ff819bc8aa9",
+  "head": "93ef1e38ff540aedbd4609c15ea6bf09c35ef54b",
+  "baselineExit": 1,
+  "fixedExit": 0,
+  "sameTestSha256": "73f53e0677b677ac0abbc19ea918df3261773eb0dc500fc5b53a72f2486b7201",
+  "summary": {
+    "red": {
+      "tests": 6,
+      "pass": 1,
+      "fail": 5
+    },
+    "green": {
+      "tests": 6,
+      "pass": 6,
+      "fail": 0
+    }
+  }
+}

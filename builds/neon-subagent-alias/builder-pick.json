@@ -1,0 +1,21 @@
+{
+  "role": "builder",
+  "mode": "ordered",
+  "eligible": [
+    "opus",
+    "sol"
+  ],
+  "skipped": [
+    {
+      "family": "neon",
+      "reason": "explicitly excluded"
+    }
+  ],
+  "usage": [],
+  "family": "opus",
+  "id": "claude-opus-5-5",
+  "effort": "medium",
+  "effortSource": "role",
+  "selectedBy": "ordered",
+  "reason": "first eligible builder in role order"
+}

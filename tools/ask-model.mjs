@@ -1674,6 +1674,23 @@ function agyBuildDenials(steps, results) {
     return agyRefusal(r.failed, r.message);
   };
   const add = (r, kind, label) => { if (!found.has(r)) found.set(r, () => `${label()}: ${AGY_DENIALS[kind]}`); };
+  const subagents = (step) => (Array.isArray(step.subagent_info?.subagents) ? step.subagent_info.subagents : []).filter(isObject);
+  // agy names a subagent by conversation_id and log_uri, not always both in one update.
+  const subagentIds = (s) => [s.conversation_id, s.log_uri].filter((v) => typeof v === 'string').map((v) => JSON.stringify(['subagent', v]));
+  // Ids that any update names together are one subagent for the whole stream, grouped before any update is classified,
+  // so its updates fold in stream order exactly as they would under one id: where an identity-only link falls changes
+  // nothing. The smaller group joins the larger, so linking many ids stays n log n.
+  const group = new Map();
+  for (const step of steps) {
+    for (const s of subagents(step)) {
+      const ids = subagentIds(s);
+      for (const id of ids) if (!group.has(id)) group.set(id, [id]);
+      const [a, b] = ids.map((id) => group.get(id));
+      if (!b || a === b) continue;
+      const [into, from] = a.length < b.length ? [b, a] : [a, b];
+      for (const id of from) { into.push(id); group.set(id, into); }
+    }
+  }
   for (const step of steps) {
     const indexed = Number.isSafeInteger(step.step_index) && step.step_index >= 0;
     const key = indexed ? JSON.stringify([step.conversation_id ?? null, step.step_index]) : Symbol();
@@ -1684,12 +1701,9 @@ function agyBuildDenials(steps, results) {
       add(r, refusal, () => (agyToolName(r.tool) ? r.tool : '(unnamed)'));
       if (indexed && !refusedSteps.has(key)) refusedSteps.set(key, refusal);
     }
-    for (const s of Array.isArray(step.subagent_info?.subagents) ? step.subagent_info.subagents : []) {
-      if (!isObject(s)) continue;
-      // agy names a subagent by conversation_id and log_uri, not always both in one update.
-      const ids = [s.conversation_id, s.log_uri].filter((v) => typeof v === 'string').map((v) => JSON.stringify(['subagent', v]));
-      const sub = record(ids.find((id) => known.has(id)) ?? ids[0] ?? Symbol());
-      for (const id of ids) if (!known.has(id)) known.set(id, sub);
+    for (const s of subagents(step)) {
+      const ids = subagentIds(s);
+      const sub = record(ids.length ? group.get(ids[0])[0] : Symbol());
       if (!agyLabel(sub.name) && agyLabel(s.type_name)) sub.name = s.type_name;
       if (Array.isArray(s.denied_actions) && s.denied_actions.length) sub.approvals = true;
       const own = classify(sub, s.state ?? s.status, isObject(s.error) ? s.error.message : s.error);

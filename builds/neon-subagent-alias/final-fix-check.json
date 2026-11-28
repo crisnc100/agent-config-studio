@@ -1,0 +1,34 @@
+{
+  "id": "fix-1795887910130-0e8ca5",
+  "kind": "fix-check",
+  "review": "2026-11-28-17-35-56-80a32d",
+  "head": "a97cea7b86c595ae588f793e5fec13f5ea873dfe",
+  "family": "sol-prev",
+  "model": "gpt-6.1-sol",
+  "findingDetails": [
+    {
+      "issue": "The docs table incorrectly says state/message matching is the only refusal source. tools/ask-model.mjs:1708 and :1715 also recognize inline and result-level denied_actions independently. Both cases returned exit 4 in replay without any failed state or error message. No code supports the exclusivity claim; the cited :1639 covers only agyRefusal.",
+      "file": "builds/neon-subagent-alias/docs-table.json",
+      "line": "29",
+      "quote": "              \"claim\": \"Refusals are recognized from step state and error-message wording only; other errors such as not found do not fail the build\",",
+      "suggestion": "Limit the state/message statement to tool-step matching and name denied_actions as another refusal source.",
+      "likelihood": 3,
+      "impact": 3,
+      "protected": false,
+      "trigger": "A maintainer consults this evidence table when diagnosing a native build refused solely through inline or result-level denied_actions.",
+      "preExisting": false,
+      "risk": 9,
+      "severity": "low",
+      "filed": true,
+      "status": "verified-quote",
+      "id": "x1",
+      "inFix": true
+    }
+  ],
+  "security": {
+    "status": "ran",
+    "family": "mythos",
+    "model": "claude-mythos-5-2",
+    "effort": "high"
+  }
+}

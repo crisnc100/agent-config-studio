@@ -1,0 +1,35 @@
+{
+  "mode": "pr",
+  "purpose": "Close the native subagent alias refusal gap from merged124 with no new refusal policy, live calls or permission changes.",
+  "mechanism": "tools/ask-model.mjs agyBuildDenials first groups every subagent conversation_id/log_uri pair named together anywhere in raw step updates, using smaller-to-larger alias groups, then folds each final identity updates in original stream order through the unchanged classifier. This preserves denials seen before a late identity link and preserves paired later nonpermission errors that supersede an unpaired earlier message. Parent step logic, all-result denials, sanitized 64-entry bounds, model-mismatch precedence, read-only wall/auth/token rules and model proof stay unchanged. docs/neon-builder.md describes the stream grouping. Tests now10alias cases plus existing suites; originalcounterexamples and nonpermissioncasepass independently injudge recheck.",
+  "decisions": "Identity-only link placement cannot affect the same chronological update fold; moving a state/message-bearing update naturally changes chronological input. No new refusal kinds, matching rules, fields read from output text, transcriptIO, sandbox defaults or liveprobe. Originalapproval-filenameLOW remains filed; do not imply every ENOENT is unconditionally clean if message matches existing approval pattern. Other124filedLOWs untouched. No Bsavedexclusion claims or liveconfiguration.",
+  "readers": "docs/neon-builder.md is for CLI operators/orchestrators. Source comments tell maintainers why identity grouping precedes the fold, not implementation narration. Current build records are immutable evidence, not editorial docs.",
+  "base": "origin/main",
+  "docMap": [
+    {
+      "behavior": "Canonical subagent identity grouping and original chronological refusal fold",
+      "docs": [
+        "docs/neon-builder.md"
+      ]
+    }
+  ],
+  "untouchable": [
+    "builds/neon-subagent-alias/builder-brief.md",
+    "builds/neon-subagent-alias/builder-pick.json",
+    "builds/neon-subagent-alias/checkpoint-review.json",
+    "builds/neon-subagent-alias/context.md",
+    "builds/neon-subagent-alias/fix-brief.md",
+    "builds/neon-subagent-alias/fix-replay.json",
+    "builds/neon-subagent-alias/grade.json",
+    "builds/neon-subagent-alias/jev.json",
+    "builds/neon-subagent-alias/log.md",
+    "builds/neon-subagent-alias/order-baseline.json",
+    "builds/neon-subagent-alias/plan.md",
+    "builds/neon-subagent-alias/prelink-after.json",
+    "builds/neon-subagent-alias/prelink-before.json",
+    "builds/neon-subagent-alias/recheck.json",
+    "builds/neon-subagent-alias/tdd-proof.json",
+    "README.md",
+    "packs/KNOWN-LIMITS.md"
+  ]
+}

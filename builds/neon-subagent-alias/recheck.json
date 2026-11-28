@@ -1,0 +1,19 @@
+{
+  "family": "sol",
+  "model": "gpt-6.2-sol",
+  "criteria": [
+    {
+      "id": "A2",
+      "criterion": "Aliases link regardless of update order; a later clean/DONE update or repeated linking cannot erase a denial; pre-existing aliases, transitive links and two already-refused records merge consistently with bounded, deduplicated diagnostic entries. Distinct unlinked subagents remain distinct.",
+      "verdict": "PASS",
+      "evidence": "The in-memory CLI replay returned exit 4, a null answer, no build receipt, and one denial for both empty and plain DONE clears with the link first or last. Both late-link variants returned success on 1940a53. The same alias test bytes produced 1 pass/9 fail on 1b05cc9, 5/5 on 1940a53, and 10/0 at HEAD, covering transitive and repeated links, already-refused aliases, distinct unlinked subagents, and 70 unique refusals reported as 63 entries plus an overflow marker. c6ed0bc preserves the exact entries, count, exit, answer absence, and canary assertions and adds the links-first case. I independently reproduced worker-before-other on both historical revisions with links first or one ID per subagent. The revised assertion still fails on the old tip's links-last order."
+    },
+    {
+      "id": "A3",
+      "criterion": "Clean streams and nonpermission failures remain clean under the existing classification rule; read-only results, mismatch-only2, denial+mismatch4, native bounds and no-private-transcript behavior remain unchanged. Existing offline suites pass; no live models/agy calls.",
+      "verdict": "PASS",
+      "evidence": "The classifier and chronological update rule are byte-identical to both historical revisions. Message-only EPERM followed by ERROR+ENOENT exited 0 with an answer and no denials in both link positions at HEAD. The old tip's late-link case exited 4. The in-memory CLI returned mismatch-only exit 2 and denial-plus-mismatch exit 4, with zero native transcript accesses and no canary leakage. Read-only output matched both historical revisions with a synthetic transcript. The recheck verified the 64-entry native caps and target-length bound and passed alias 10/10, build evidence 6/6, build denials 7/7, and static guards 11/11. The build log supplies the broader fixture-based offline results. No files were written and no live model, agy, GUI, or real transcript was accessed."
+    }
+  ],
+  "findings": []
+}

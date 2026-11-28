@@ -1,0 +1,14 @@
+[
+  {
+    "clear": "",
+    "exit": null,
+    "answerPresent": true,
+    "denied": []
+  },
+  {
+    "clear": "command exited 1",
+    "exit": null,
+    "answerPresent": true,
+    "denied": []
+  }
+]
