@@ -187,3 +187,94 @@ test('linked refusals are bounded and counted once at scale; a refusal still out
   assert.equal(plain.answer, 'edited source.txt');
   assert.deepEqual(plain.denied, [], 'read-only calls do not read inline subagent evidence');
 });
+
+// The same updates with the identity-only linking update(s) at every position: each placement must give the outcome
+// of the placement before every update, where agy has named one subagent before any evidence arrives.
+const everyLinkPlacement = (updates, check, linking = [link()]) => {
+  for (let i = 0; i <= updates.length; i++) {
+    check(build(stream([...updates.slice(0, i), ...linking, ...updates.slice(i)])), `linking after ${i} update(s)`);
+  }
+};
+const ENOENT = 'ENOENT: no such file or directory';
+
+test('an update that replaces the message before the link never erases a refusal the same updates make linked first', () => {
+  for (const clear of ['', 'command exited 1']) {
+    for (const [label, updates, entry] of [
+      ['ERROR under conversation_id, EPERM then DONE and the clear under log_uri', [
+        byConv({ type_name: 'worker', status: 'ERROR' }), byLog({ error: EPERM }), byLog({ state: 'DONE', error: clear }),
+      ], 'subagent (worker): permission denied'],
+      ['ERROR under log_uri, EPERM then the clear under conversation_id', [
+        byLog({ type_name: 'worker', state: 'ERROR' }), byConv({ error: { message: EPERM } }), byConv({ error: { message: clear } }),
+      ], 'subagent (worker): permission denied'],
+      ['EPERM under log_uri, then ERROR under conversation_id, then the clear under log_uri', [
+        byLog({ error: EPERM }), byConv({ type_name: 'worker', status: 'ERROR' }), byLog({ error: clear }),
+      ], 'subagent (worker): permission denied'],
+      ['a deny rule under conversation_id, ERROR under log_uri, then DONE and the clear under conversation_id', [
+        byConv({ type_name: 'worker', error: DENY_RULE }), byLog({ state: 'ERROR' }), byConv({ status: 'DONE', error: clear }),
+      ], 'subagent (worker): blocked by deny rule'],
+    ]) everyLinkPlacement(updates, (got, where) => refusedBuild(got, [entry], `${label} (${JSON.stringify(clear)}), ${where}`));
+  }
+});
+
+test('a refusal message no failed state met stays unpaired when a later failure brings its own message, wherever the link falls', () => {
+  for (const [label, updates] of [
+    ['EPERM alone under conversation_id, then ERROR with ENOENT under log_uri', [
+      byConv({ type_name: 'worker', error: EPERM }), byLog({ state: 'ERROR', error: ENOENT }),
+    ]],
+    ['EPERM alone under log_uri, then ERROR with ENOENT under conversation_id', [
+      byLog({ error: EPERM }), byConv({ type_name: 'worker', status: 'ERROR', error: { message: ENOENT } }),
+    ]],
+    ['a deny rule alone, then ERROR with a plain error under the other id', [
+      byConv({ error: DENY_RULE }), byLog({ type_name: 'worker', state: 'ERROR', error: 'command exited 1' }),
+    ]],
+    ['EPERM, then an empty error, then ERROR under the other id', [byLog({ error: EPERM }), byLog({ error: '' }), byConv({ status: 'ERROR' })]],
+    ['CANCELLED, then a deny rule and a clear under the other id', [
+      byConv({ status: 'CANCELLED' }), byLog({ error: DENY_RULE }), byLog({ state: 'DONE', error: '' }),
+    ]],
+    ['DONE throughout beside EPERM', [byConv({ status: 'DONE' }), byLog({ state: 'DONE', error: EPERM }), byConv({ status: 'DONE' })]],
+  ]) everyLinkPlacement(updates, (got, where) => cleanBuild(got, `${label}, ${where}`));
+
+  everyLinkPlacement([byLog({ type_name: 'worker', state: 'ERROR', error: ENOENT }), byConv({ error: EPERM })],
+    (got, where) => refusedBuild(got, ['subagent (worker): permission denied'], `ERROR with ENOENT, then EPERM under the other id, ${where}`));
+});
+
+test('transitive and repeated links fold every update of one subagent in stream order, wherever the links fall', () => {
+  const split = [byConv({ type_name: 'worker', status: 'ERROR' }), byConv({ error: EPERM }, 'c2'), byConv({ status: 'DONE', error: '' }, 'c2')];
+  const chain = [link(), link({}, 'c2')];
+  everyLinkPlacement(split, (got, where) => refusedBuild(got, ['subagent (worker): permission denied'], `two ids linked through log_uri, ${where}`), chain);
+  refusedBuild(build(stream([chain[1], ...split, chain[0]])), ['subagent (worker): permission denied'], 'one link first, the other last');
+
+  const twice = invoke({ conversation_id: 'c1', log_uri: LOG }, { conversation_id: 'c1', log_uri: LOG });
+  everyLinkPlacement([byConv({ type_name: 'worker', status: 'ERROR' }), byLog({ error: EPERM }), byLog({ error: '' })],
+    (got, where) => refusedBuild(got, ['subagent (worker): permission denied'], `one subagent named twice in the linking update, ${where}`),
+    [twice, twice]);
+
+  everyLinkPlacement([byConv({ type_name: 'worker', error: EPERM }, 'c2'), byConv({ status: 'ERROR', error: ENOENT })],
+    (got, where) => cleanBuild(got, `unpaired EPERM and a later ENOENT across a transitive link, ${where}`), chain);
+
+  const two = 'file:///no-such-fixture/two/transcript.jsonl';
+  everyLinkPlacement([
+    byConv({ type_name: 'worker', status: 'ERROR' }), byLog({ error: EPERM }), byLog({ error: '' }),
+    byConv({ type_name: 'other', error: EPERM }, 'c2'), byLog({ state: 'ERROR', error: ENOENT }, two),
+  ], (got, where) => refusedBuild(got, ['subagent (worker): permission denied'], `one refused and one unrefused subagent, ${where}`),
+  [link(), link({}, 'c2', two)]);
+});
+
+test('clears before a link at scale stay counted and bounded; unpaired messages at scale stay clean', () => {
+  const n = 70;
+  const uri = (i) => `file:///no-such-fixture/s${i}/transcript.jsonl`;
+  const ids = Array.from({ length: n }, (_, i) => i);
+  const linkAll = invoke(...ids.map((i) => ({ conversation_id: `s${i}`, log_uri: uri(i) })));
+  const entry = 'subagent (worker): permission denied';
+
+  const cleared = build(stream([
+    ...ids.map((i) => byConv({ type_name: 'worker', status: 'ERROR' }, `s${i}`)), ...ids.map((i) => byLog({ error: EPERM }, uri(i))),
+    ...ids.map((i) => byLog({ state: 'DONE', error: '' }, uri(i))), linkAll,
+  ]));
+  refusedBuild(cleared, [...Array(63).fill(entry), '(7 more not listed)'], 'seventy refusals cleared before the link', n);
+  assert.equal(cleared.notes.length, 64);
+
+  cleanBuild(build(stream([
+    ...ids.map((i) => byConv({ type_name: 'worker', error: EPERM }, `s${i}`)), ...ids.map((i) => byLog({ state: 'ERROR', error: ENOENT }, uri(i))), linkAll,
+  ])), 'seventy unpaired EPERM messages, then ERROR with ENOENT');
+});
