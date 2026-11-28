@@ -1673,34 +1673,24 @@ function agyBuildDenials(steps, results) {
     if (typeof message === 'string') r.message = message;
     return agyRefusal(r.failed, r.message);
   };
-  let order = 0;
-  const add = (r, kind, label) => {
-    if (found.has(r)) return;
-    r.order = order++;
-    found.set(r, () => `${label()}: ${AGY_DENIALS[kind]}`);
-  };
-  const subagentRefusal = (sub, state, message) => {
-    const own = classify(sub, state, message);
-    const kind = AGY_DENIALS[own] ? own : sub.approvals ? 'approval-required' : null;
-    if (kind) add(sub, kind, () => `subagent${sub.name === undefined ? '' : ` (${sub.name})`}`);
-  };
-  // Two records of one subagent, each under one of its ids, meet when an update names both. Keeping the one whose
-  // refusal was found first (else the one under the update's first id) leaves its entry as listed and counts the
-  // subagent once. The other's state and message join it, a refusal from either winning, and are classified before the
-  // linking update's own fields can replace them.
-  const merge = (a, b) => {
-    const bFirst = b.order !== undefined && (a.order === undefined || b.order < a.order);
-    const [keep, gone] = bFirst ? [b, a] : [a, b];
-    for (const id of gone.ids) known.set(id, keep);
-    keep.ids.push(...gone.ids);
-    found.delete(gone);
-    if (!agyLabel(keep.name)) keep.name = gone.name;
-    keep.approvals ||= gone.approvals;
-    keep.failed = keep.failed === 'DENIED' || gone.failed === 'DENIED' ? 'DENIED' : keep.failed ?? gone.failed;
-    keep.message = [keep.message, gone.message].find((m) => AGY_DENIALS[agyRefusal('ERROR', m)]) ?? keep.message ?? gone.message;
-    subagentRefusal(keep);
-    return keep;
-  };
+  const add = (r, kind, label) => { if (!found.has(r)) found.set(r, () => `${label()}: ${AGY_DENIALS[kind]}`); };
+  const subagents = (step) => (Array.isArray(step.subagent_info?.subagents) ? step.subagent_info.subagents : []).filter(isObject);
+  // agy names a subagent by conversation_id and log_uri, not always both in one update.
+  const subagentIds = (s) => [s.conversation_id, s.log_uri].filter((v) => typeof v === 'string').map((v) => JSON.stringify(['subagent', v]));
+  // Ids that any update names together are one subagent for the whole stream, grouped before any update is classified,
+  // so its updates fold in stream order exactly as they would under one id: where the linking update falls changes
+  // nothing. The smaller group joins the larger, so linking many ids stays n log n.
+  const group = new Map();
+  for (const step of steps) {
+    for (const s of subagents(step)) {
+      const ids = subagentIds(s);
+      for (const id of ids) if (!group.has(id)) group.set(id, [id]);
+      const [a, b] = ids.map((id) => group.get(id));
+      if (!b || a === b) continue;
+      const [into, from] = a.length < b.length ? [b, a] : [a, b];
+      for (const id of from) { into.push(id); group.set(id, into); }
+    }
+  }
   for (const step of steps) {
     const indexed = Number.isSafeInteger(step.step_index) && step.step_index >= 0;
     const key = indexed ? JSON.stringify([step.conversation_id ?? null, step.step_index]) : Symbol();
@@ -1711,16 +1701,14 @@ function agyBuildDenials(steps, results) {
       add(r, refusal, () => (agyToolName(r.tool) ? r.tool : '(unnamed)'));
       if (indexed && !refusedSteps.has(key)) refusedSteps.set(key, refusal);
     }
-    for (const s of Array.isArray(step.subagent_info?.subagents) ? step.subagent_info.subagents : []) {
-      if (!isObject(s)) continue;
-      // agy names a subagent by conversation_id and log_uri, not always both in one update.
-      const ids = [s.conversation_id, s.log_uri].filter((v) => typeof v === 'string').map((v) => JSON.stringify(['subagent', v]));
-      const [a, b] = new Set(ids.filter((id) => known.has(id)).map((id) => known.get(id)));
-      const sub = b ? merge(a, b) : a ?? { ids: [] };
-      for (const id of ids) if (known.get(id) !== sub) { known.set(id, sub); sub.ids.push(id); }
+    for (const s of subagents(step)) {
+      const ids = subagentIds(s);
+      const sub = record(ids.length ? group.get(ids[0])[0] : Symbol());
       if (!agyLabel(sub.name) && agyLabel(s.type_name)) sub.name = s.type_name;
       if (Array.isArray(s.denied_actions) && s.denied_actions.length) sub.approvals = true;
-      subagentRefusal(sub, s.state ?? s.status, isObject(s.error) ? s.error.message : s.error);
+      const own = classify(sub, s.state ?? s.status, isObject(s.error) ? s.error.message : s.error);
+      const nested = AGY_DENIALS[own] ? own : sub.approvals ? 'approval-required' : null;
+      if (nested) add(sub, nested, () => `subagent${sub.name === undefined ? '' : ` (${sub.name})`}`);
     }
   }
   for (const result of results) {

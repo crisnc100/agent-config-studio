@@ -1,0 +1,28 @@
+{
+  "replay": "readAnswer over git-archived sources, temp HOME, no CLI, agy or model; scripts outside the repo",
+  "aliasSuite": {
+    "testSha256": "d4e211f0368bc1be52665e914dfa62e59a3b179b73edabc7e8434cbbc3dcf30c",
+    "1b05cc9": { "pass": 1, "fail": 9 },
+    "1940a53": { "pass": 5, "fail": 5 },
+    "fixed": { "pass": 10, "fail": 0 }
+  },
+  "counterexamples": {
+    "case1": "ERROR under conversation_id, EPERM under log_uri, then DONE with the clear under log_uri, then SUCCESS",
+    "case2": "EPERM alone under conversation_id, then ERROR with ENOENT under log_uri, then SUCCESS",
+    "1b05cc9": {
+      "case1 clear=\"\"": { "linkLast": { "exit": null, "answerPresent": true, "denied": [] }, "linkFirst": { "exit": 4, "answerPresent": false, "denied": ["subagent: permission denied"] } },
+      "case1 clear=\"command exited 1\"": { "linkLast": { "exit": null, "answerPresent": true, "denied": [] }, "linkFirst": { "exit": 4, "answerPresent": false, "denied": ["subagent: permission denied"] } },
+      "case2": { "linkLast": { "exit": null, "answerPresent": true, "denied": [] }, "linkFirst": { "exit": null, "answerPresent": true, "denied": [] } }
+    },
+    "1940a53": {
+      "case1 clear=\"\"": { "linkLast": { "exit": null, "answerPresent": true, "denied": [] }, "linkFirst": { "exit": 4, "answerPresent": false, "denied": ["subagent: permission denied"] } },
+      "case1 clear=\"command exited 1\"": { "linkLast": { "exit": null, "answerPresent": true, "denied": [] }, "linkFirst": { "exit": 4, "answerPresent": false, "denied": ["subagent: permission denied"] } },
+      "case2": { "linkLast": { "exit": 4, "answerPresent": false, "denied": ["subagent: permission denied"] }, "linkFirst": { "exit": null, "answerPresent": true, "denied": [] } }
+    },
+    "fixed": {
+      "case1 clear=\"\"": { "linkLast": { "exit": 4, "answerPresent": false, "denied": ["subagent: permission denied"] }, "linkFirst": { "exit": 4, "answerPresent": false, "denied": ["subagent: permission denied"] } },
+      "case1 clear=\"command exited 1\"": { "linkLast": { "exit": 4, "answerPresent": false, "denied": ["subagent: permission denied"] }, "linkFirst": { "exit": 4, "answerPresent": false, "denied": ["subagent: permission denied"] } },
+      "case2": { "linkLast": { "exit": null, "answerPresent": true, "denied": [] }, "linkFirst": { "exit": null, "answerPresent": true, "denied": [] } }
+    }
+  }
+}
