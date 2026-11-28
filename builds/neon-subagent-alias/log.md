@@ -1,1 +1,21 @@
 Plan accepted by current user scope. Advisor explicitly not needed for correcting existing identity rule. wnew cut stale localmain aef177b; only this new worktree fast-forwarded to origin/main1b05cc9 before any edits. Trunk and paused Cursor worktree untouched. Installed model-id lacks --pick; merged repo CLI used with explicit Neon exclusion. Pick orderedOpus; Jev xhighconfidence0.98,p0.99. ShadowSolconfidence0.35,p0.57 does not decide lane. Qualification0/5; no live calls.
+
+## Builder (Opus), 2026-11-28
+
+Test first. 03905ce adds tests/ask-model-build-alias.mjs (6 tests) and its SUITE line, test-only. Run against 1b05cc9 source: 5 fail, 1 pass (the clean-control test). The recheck replay (ERROR under conversation_id, EPERM under log_uri, then both ids, then SUCCESS) returned `{"answer":"edited source.txt",...,"denied":[]}` with no exit, the path that reaches `completed: true`; two refused records of one subagent gave "agy refused 2". cffb6fc (test-only) corrects one fixture of that test: `bad name <canary>` passes agyLabel, so it was not an invalid name; `../<canary>` is. Re-run against 1b05cc9 after it: still 5 fail, 1 pass. With the source fix: 6 pass.
+
+Code decisions (tools/ask-model.mjs agyBuildDenials only; agyRefusal, the kinds, bounds and labels unchanged):
+- A subagent record carries the ids that point to it. When an update names ids held by two records, they merge: the absorbed record's ids are all repointed, so an id the link did not name still reaches the merged record.
+- Kept record: the one whose refusal entry was found first (entries are stamped in order), else the one under the update's first id (conversation_id), matching the old first-known precedence. Its entry keeps its place and kind; the other's entry is dropped, so a subagent counts once.
+- Merged fields: first valid name (kept record's first); approvals OR; failed state DENIED if either, else either; message a refusal message from either if any. This is the existing pairing rule (a failed state and a refusal message from split updates are one refusal) applied to both records' evidence, not a new rule; no new refusal kinds or text sources.
+- The merged record is classified before the linking update's own fields are applied, so a link that carries DONE or a plain error cannot overwrite the message that made the refusal.
+
+Sibling check:
+- Merge of two subagent records: applied to the only path that joins subagent ids (agyBuildDenials). agySubagentDenials (build notes, read-only transcripts) and its copy in packs/review-gate/runtime/review.mjs: not needed, one note per log_uri with no inline evidence identity. Indexed and unindexed step records: not needed, a step has one key. result.denied_actions: not needed, no identity. agyBuildActions and byStep: not needed, subagents are not in byStep. Consumer readAgy -> exit 4 and no build receipt: applied, asserted.
+- Kept-entry precedence (order stamp): applied to every add; result entries use Symbol keys and never merge.
+- Classify-before-link-fields: applied in merge; the non-merging path is unchanged (one record, fields applied in order as before).
+- Not handled: none in scope.
+
+Remaining limits: a merge moves the absorbed record's ids, so a crafted stream that links one subagent to many ids repeatedly costs more than linear time. agy's shape gives a subagent one conversation_id and one log_uri. When both records were already refused with different kinds, the earlier entry's kind is listed. The approval-filename LOW and other filed LOWs are untouched.
+
+Targeted checks (offline, stubs, temp HOME): node --check tools/ask-model.mjs ok; ask-model-build-alias 6/6; ask-model-build-evidence 6/6; ask-model-build-denials 7/7; ask-model-build 13/13; ask-model-agy 88/0; ask-model 364/0; suite-coverage 33/0; guards 11/0; setup-guards 110/0; ask-model-allow-command 9/9. Full suite not run here.
