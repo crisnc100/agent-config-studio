@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "reviewId": "2026-11-28-16-35-39-d6f05e",
+  "reviewer": "codex-gpt-6.1-sol-xhigh",
+  "family": "sol-prev",
+  "base": "origin/main",
+  "branch": "neon-subagent-alias",
+  "head": "1940a53069d32a35ab935f8ea2cd30edc2b87416",
+  "reportPath": "reviews/2026-11-28-16-35-39-d6f05e/code-review.md",
+  "diffTruncated": false,
+  "verify": null,
+  "secondOpinion": null,
+  "findings": [
+    {
+      "issue": "Residual fail-open in the alias merge: a refusal message recorded under one id can be replaced before the link, so the merged record sees no refusal and the build reports completed: true. Each subagent record keeps only its latest error string (classify overwrites r.message on any string, including ''). When the failed state sits under one id and the refusal message under the other, nothing is classified until the linking update. If a later update under the second id carries a plain error or an empty string before that link, merge() finds no refusal message in either record, the result is clean, and readAgy returns the answer (ask-model.mjs:2188 then writes build.completed true). Traced by reading, not run: byConv({status:'ERROR'}), byLog({error:'EPERM \u2026'}), byLog({error:''}) or byLog({error:'command exited 1'}), link(), SUCCESS -> A.failed='ERROR', B.message='' -> [undefined,''].find(...) is undefined -> agyRefusal('ERROR','') is null -> no entry, no exit. The same updates under one id are refused at the second update and a later string cannot clear it, so this breaks A2 ('a later clean/DONE update cannot erase a denial') for the window before the link. Base returned clean for this input too; the branch's merge leaves it open. The new tests only send the clearing updates after the link. Harmed principal: the operator, whose orchestrator receives a native build receipt for a build in which a subagent action was refused.",
+      "file": "tools/ask-model.mjs",
+      "line": "1700",
+      "quote": "    keep.message = [keep.message, gone.message].find((m) => AGY_DENIALS[agyRefusal('ERROR', m)]) ?? keep.message ?? gone.message;",
+      "suggestion": "Make a subagent record's refusal message sticky before the merge reads it: in the subagent path, do not let a string that is not a refusal message replace one for which AGY_DENIALS[agyRefusal('ERROR', m)] is set (or keep it in a separate field that merge() consults). Add a fixture: ERROR under conversation_id, EPERM under log_uri, then error '' and a plain error under log_uri, then the link -> exit 4 with one entry. This is the existing pairing rule applied to the pre-link window, not a new refusal kind.",
+      "likelihood": 1,
+      "impact": 7,
+      "protected": false,
+      "trigger": "No observed trigger in normal use (unverified against a live agy stream; no live calls are authorized). It needs agy to (1) split a subagent's failed state and its refusal message across conversation_id and log_uri, the parent gap earlier rated likelihood 2, and additionally (2) send a second error string ('' or a non-permission error) under the message-bearing id before the update that names both ids. Call path: ask-model native agy build -> readAgy -> agyBuildDenials -> merge.",
+      "preExisting": false,
+      "risk": 7,
+      "severity": "low",
+      "filed": true,
+      "status": "verified-quote",
+      "source": "security",
+      "id": "s1"
+    }
+  ],
+  "disputed": [],
+  "unverified": [],
+  "security": {
+    "run": "required",
+    "required": "logic or other files: builds/neon-subagent-alias/builder-pick.json, builds/neon-subagent-alias/jev.json, builds/neon-subagent-alias/tdd-proof.json, tools/ask-model.mjs",
+    "why": "security role, in role order (crossFamily off)",
+    "status": "ran",
+    "family": "mythos",
+    "model": "claude-mythos-5-2",
+    "effort": "high",
+    "vendor": "claude",
+    "durationMs": 128016,
+    "rescored": {
+      "asked": 0,
+      "scored": 0
+    },
+    "findings": 1,
+    "manifest": {
+      "v": 1,
+      "role": "security",
+      "base": "1b05cc9c885597df7c0c86781fc21ff819bc8aa9",
+      "head": "1940a53069d32a35ab935f8ea2cd30edc2b87416",
+      "read": [
+        [
+          "builds/neon-subagent-alias/builder-brief.md",
+          null,
+          "100644 6577fb7e8b2ae9d2362f08ce8c73a5d0e2fea54f"
+        ],
+        [
+          "builds/neon-subagent-alias/builder-pick.json",
+          null,
+          "100644 e1f6acc9d79f192bd82f54beacee309a9cbaa55f"
+        ],
+        [
+          "builds/neon-subagent-alias/context.md",
+          null,
+          "100644 f043f2907048f8b542f0b4440529b5cd29767790"
+        ],
+        [
+          "builds/neon-subagent-alias/jev.json",
+          null,
+          "100644 179b5ef159c79da4c16ac6213098f1b8066078e6"
+        ],
+        [
+          "builds/neon-subagent-alias/log.md",
+          null,
+          "100644 94112132b30f5b3810467f4927372f9de319d62c"
+        ],
+        [
+          "builds/neon-subagent-alias/plan.md",
+          null,
+          "100644 ccb69cc6e45c703619aac3468eadef26e89f8695"
+        ],
+        [
+          "builds/neon-subagent-alias/tdd-proof.json",
+          null,
+          "100644 aa476eceaaac6f790c5596dff6720792ba30baa2"
+        ],
+        [
+          "docs/neon-builder.md",
+          "100644 fe0e03bb91a2be6bb7d3798d76803f1f991a450b",
+          "100644 e25dbeb2d9e6b726c465a5e07b46c0dd7a47c4d5"
+        ],
+        [
+          "tests/SUITE",
+          "100644 5ad03dd94ad830b28001985e2663ed365f0d5321",
+          "100644 1f0b9d1659d9868abcadafaf15de804392de498d"
+        ],
+        [
+          "tests/ask-model-build-alias.mjs",
+          null,
+          "100644 015a51c248ce95e66c766e3071b4f958c6526b82"
+        ],
+        [
+          "tools/ask-model.mjs",
+          "100644 99358bf84e826c0c53ed94259973dd6613b1ae16",
+          "100644 cdb320867a32d20bd1b99378b3091e021a5e6f93"
+        ]
+      ],
+      "unread": [],
+      "promptSha256": "c5d37de397373daca7ade40021896f2dbb417be50417eadd3e54d82c7e5039e1",
+      "cap": 120000
+    }
+  }
+}

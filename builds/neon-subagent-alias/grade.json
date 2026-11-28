@@ -1,0 +1,46 @@
+{
+  "family": "sol",
+  "model": "gpt-6.2-sol",
+  "criteria": [
+    {
+      "id": "A1",
+      "criterion": "The judge's replay (ERROR under conversation_id, EPERM under log_uri, then both IDs, then SUCCESS) returns exit4 with no answer/build and cannot emit completed true. Test is red on merged124 and green after code.",
+      "verdict": "PASS",
+      "evidence": "I replayed the same committed test bytes in memory, matching the SHA-256 in tdd-proof.json. The suite passed 1/6 on merged #124 (1b05cc9) and 6/6 at 1940a53. The stubbed CLI replay returned exit 0 with completed true on #124 and exit 4 with answer null and no build field at tip. Commit 03905ce adds coverage without weakening existing assertions. Commit cffb6fc changes only the fixture input. I verified that agyLabel accepts the old value and rejects the replacement."
+    },
+    {
+      "id": "A2",
+      "criterion": "Aliases link regardless of update order; a later clean/DONE update or repeated linking cannot erase a denial; pre-existing aliases, transitive links and two already-refused records merge consistently with bounded, deduplicated diagnostic entries. Distinct unlinked subagents remain distinct.",
+      "verdict": "FAIL",
+      "evidence": "The committed tests pass for transitive alias propagation, repeated links, earliest recorded refusal order, deduplication, the 64-entry cap and distinct unlinked subagents. A stubbed CLI replay with ERROR under conversation_id, EPERM under log_uri, then DONE with an empty error under log_uri before the link returned exit 0 with completed true. Moving only the link to the start returned exit 4. The clean update can erase split evidence before the merger sees it."
+    },
+    {
+      "id": "A3",
+      "criterion": "Clean streams and nonpermission failures remain clean under the existing classification rule; read-only results, mismatch-only2, denial+mismatch4, native bounds and no-private-transcript behavior remain unchanged. Existing offline suites pass; no live models/agy calls.",
+      "verdict": "FAIL",
+      "evidence": "A stubbed stream with a message-only EPERM followed by an explicit ERROR with ENOENT under the other ID returned exit 4 when linked last. It returned exit 0 on origin/main and when linked first at tip. All 19 parser tests passed in memory, and all 11 static guards passed. The stubbed CLI preserved mismatch-only exit 2 and denial-plus-mismatch exit 4, with zero private transcript accesses and no canary leakage. The build log records broader offline passes. This read-only sandbox blocked filesystem fixture setup. No live models or agy calls ran."
+    }
+  ],
+  "findings": [
+    {
+      "likelihood": 2,
+      "impact": 8,
+      "protected": false,
+      "trigger": "A subagent emits ERROR and EPERM under separate aliases, then sends DONE with an empty error under the message alias before its first linking update.",
+      "issue": "A clean update can erase the only permission message and let a refused native build report completion.",
+      "file": "tools/ask-model.mjs",
+      "line": "1673",
+      "evidence": "The empty string replaces EPERM at line 1673. The merge at line 1700 sees only the current messages. In the stubbed CLI, moving only the link from the start to after DONE changed exit 4 with one denial to exit 0 with completed true."
+    },
+    {
+      "likelihood": 2,
+      "impact": 5,
+      "protected": false,
+      "trigger": "A subagent emits an EPERM message without a failed state under one alias, then an explicit ERROR with ENOENT under the other alias, and later links them.",
+      "issue": "The merge can turn a nonpermission failure into a permission refusal by preferring the superseded message.",
+      "file": "tools/ask-model.mjs",
+      "line": "1700",
+      "evidence": "The merge selects a permission-like message from either record and pairs it with the failed state, discarding the newer ENOENT supplied with that state. The stubbed CLI returned exit 4 with permission denied at tip. Linking first at tip or replaying the late link on origin/main returned exit 0."
+    }
+  ]
+}
