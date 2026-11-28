@@ -130,11 +130,14 @@ test('two refused records of one subagent are one entry once linked; distinct su
   ]) refusedBuild(build(stream(middle)), [entry], label);
 
   const two = 'file:///no-such-fixture/two/transcript.jsonl';
-  refusedBuild(build(stream([
+  const updates = [
     byConv({ type_name: 'worker', status: 'ERROR' }), byLog({ error: EPERM }),
     byConv({ type_name: 'other', state: 'DENIED' }, 'c2'), byLog({ error: DENY_RULE }, two),
-    link(), link({}, 'c2', two),
-  ])), ['subagent (other): denied', 'subagent (worker): permission denied'], 'two linked subagents, two entries');
+  ];
+  const links = [link(), link({}, 'c2', two)];
+  for (const [label, middle] of [['links last', [...updates, ...links]], ['links first', [...links, ...updates]]]) {
+    refusedBuild(build(stream(middle)), ['subagent (worker): permission denied', 'subagent (other): denied'], `two linked subagents, two entries, ${label}`);
+  }
 });
 
 test('split evidence that never pairs a failed state with a refusal message stays clean after a link', () => {
