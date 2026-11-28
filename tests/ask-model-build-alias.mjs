@@ -91,7 +91,7 @@ test('a later DONE, repeated links and the linking update\'s own fields never cl
     ['subagent (worker): permission denied'], 'the linking update carries DONE, a plain error and another name');
 
   refusedBuild(build(stream([
-    byConv({ type_name: `bad name ${CANARY}`, status: 'ERROR' }), byLog({ type_name: 'worker', error: EPERM }), link(),
+    byConv({ type_name: `../${CANARY}`, status: 'ERROR' }), byLog({ type_name: 'worker', error: EPERM }), link(),
   ])), ['subagent (worker): permission denied'], 'the valid name of either id labels the entry');
 });
 
