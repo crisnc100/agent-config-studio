@@ -1,0 +1,17 @@
+{
+  "case": "tests/ask-model-build-alias.mjs 'two linked subagents, two entries': ERROR under c1, EPERM under LOG, DENIED under c2, a deny rule under two, then link(c1, LOG), link(c2, two)",
+  "replay": "readAnswer over archived sources (git archive), temp HOME, no CLI or model; script outside the repo",
+  "results": {
+    "1b05cc9": {
+      "linksLast": { "exit": 4, "denied": ["subagent (other): denied"] },
+      "linksFirst": { "exit": 4, "denied": ["subagent (worker): permission denied", "subagent (other): denied"] },
+      "oneIdPerSubagent": { "exit": 4, "denied": ["subagent (worker): permission denied", "subagent (other): denied"] }
+    },
+    "1940a53": {
+      "linksLast": { "exit": 4, "denied": ["subagent (other): denied", "subagent (worker): permission denied"] },
+      "linksFirst": { "exit": 4, "denied": ["subagent (worker): permission denied", "subagent (other): denied"] },
+      "oneIdPerSubagent": { "exit": 4, "denied": ["subagent (worker): permission denied", "subagent (other): denied"] }
+    }
+  },
+  "conclusion": "Linked first, or under one id each, the existing classifier lists worker (refused at the second update) before other (refused at the third) on both commits. Only 1940a53 with the links last lists other first, because its merge defers worker's refusal to the link. The test's expected order pins that artifact; the adjusted expectation is the linked-first order, with the same two entries and count."
+}
